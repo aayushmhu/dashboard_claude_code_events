@@ -35,8 +35,7 @@ logger-errors.log
 hook-debug.log
 *.log
 
-# sensitive hook files — keep these in ~/.claude/, never in the repo
-log-to-db.py
+# sensitive hook files
 settings.json.bak
 
 # typescript

@@ -11,9 +11,21 @@ export function getProjectName(projectDir: string): string {
   return projectDir.split('/').filter(Boolean).pop() || projectDir;
 }
 
+// MySQL returns timestamps as "YYYY-MM-DD HH:mm:ss" with no timezone suffix.
+// Without correction, new Date() treats them as local time instead of UTC,
+// causing times to appear offset by the local UTC offset (e.g. +5:30 for IST).
+function parseDbDate(dateStr: string): Date {
+  if (!dateStr) return new Date(NaN);
+  // "2026-05-07 10:00:00" or "2026-05-07 10:00:00.000" — no tz info → treat as UTC
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(dateStr)) {
+    return new Date(dateStr.replace(' ', 'T') + 'Z');
+  }
+  return new Date(dateStr);
+}
+
 export function formatRelativeTime(dateStr: string): string {
   try {
-    return formatDistanceToNow(new Date(dateStr), { addSuffix: true });
+    return formatDistanceToNow(parseDbDate(dateStr), { addSuffix: true });
   } catch {
     return dateStr;
   }
@@ -21,7 +33,7 @@ export function formatRelativeTime(dateStr: string): string {
 
 export function formatAbsoluteTime(dateStr: string): string {
   try {
-    return format(new Date(dateStr), 'MMM d, yyyy HH:mm:ss');
+    return format(parseDbDate(dateStr), 'MMM d, yyyy HH:mm:ss');
   } catch {
     return dateStr;
   }

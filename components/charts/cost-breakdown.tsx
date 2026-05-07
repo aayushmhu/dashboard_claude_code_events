@@ -21,6 +21,7 @@ const TOOLTIP_STYLE = {
   border: '1px solid hsl(217.2, 32.6%, 17.5%)',
   borderRadius: '8px',
   fontSize: '12px',
+  color: 'hsl(210, 40%, 98%)',
 };
 
 const BAR_COLORS = [
@@ -59,6 +60,8 @@ export function CostBreakdown({ data }: CostBreakdownProps) {
         />
         <Tooltip
           contentStyle={TOOLTIP_STYLE}
+          labelStyle={{ color: 'hsl(210, 40%, 98%)', fontWeight: 500 }}
+          itemStyle={{ color: 'hsl(210, 40%, 98%)' }}
           formatter={(value: number) => [formatCost(value), 'Cost']}
           cursor={{ fill: 'hsl(215, 20%, 20%)', opacity: 0.3 }}
         />

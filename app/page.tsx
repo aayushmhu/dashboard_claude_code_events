@@ -18,14 +18,14 @@ import Link from 'next/link';
 async function getData() {
   const base = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
   const [stats, timeline, tools, sessionsRes, agents, tokens] = await Promise.all([
-    fetch(`${base}/api/stats`, { cache: 'no-store' }).then((r) => r.json()),
-    fetch(`${base}/api/events/timeline?days=7`, { cache: 'no-store' }).then((r) => r.json()),
-    fetch(`${base}/api/tools`, { cache: 'no-store' }).then((r) => r.json()),
-    fetch(`${base}/api/sessions?limit=10`, { cache: 'no-store' }).then((r) => r.json()),
-    fetch(`${base}/api/agents`, { cache: 'no-store' }).then((r) => r.json()),
-    fetch(`${base}/api/tokens`, { cache: 'no-store' }).then((r) => r.json()),
+    fetch(`${base}/api/stats`, { cache: 'no-store' }).then((r) => r.json()).catch(() => ({})),
+    fetch(`${base}/api/events/timeline?days=7`, { cache: 'no-store' }).then((r) => r.json()).catch(() => []),
+    fetch(`${base}/api/tools`, { cache: 'no-store' }).then((r) => r.json()).catch(() => []),
+    fetch(`${base}/api/sessions?limit=10`, { cache: 'no-store' }).then((r) => r.json()).catch(() => ({ sessions: [] })),
+    fetch(`${base}/api/agents`, { cache: 'no-store' }).then((r) => r.json()).catch(() => []),
+    fetch(`${base}/api/tokens`, { cache: 'no-store' }).then((r) => r.json()).catch(() => ({ totals: null, by_model: [] })),
   ]);
-  return { stats, timeline, tools, sessions: sessionsRes.sessions, agents, tokens };
+  return { stats, timeline, tools, sessions: sessionsRes.sessions ?? [], agents, tokens };
 }
 
 export default async function DashboardPage() {
@@ -38,7 +38,13 @@ export default async function DashboardPage() {
     tokens: { totals: TokenTotals; by_model: ModelStats[] };
   };
 
-  const errorRateColor = stats.error_rate > 5 ? 'text-destructive' : undefined;
+  const safeStats: StatsOverview = {
+    total_sessions: stats?.total_sessions ?? 0,
+    total_events: stats?.total_events ?? 0,
+    active_projects: stats?.active_projects ?? 0,
+    error_rate: stats?.error_rate ?? 0,
+  };
+  const errorRateColor = safeStats.error_rate > 5 ? 'text-destructive' : undefined;
   const totals = tokens?.totals;
   const topModel = tokens?.by_model?.find((m) => m.total_tokens > 0)?.model ?? null;
   const topModelShort = topModel ? topModel.replace('claude-', '').replace(/-\d{8}$/, '') : null;
@@ -51,25 +57,25 @@ export default async function DashboardPage() {
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
           <StatCard
             label="Total Sessions"
-            value={stats.total_sessions}
+            value={safeStats.total_sessions}
             icon={Activity}
             description="All time"
           />
           <StatCard
             label="Total Events"
-            value={stats.total_events.toLocaleString()}
+            value={safeStats.total_events.toLocaleString()}
             icon={Layers}
             description="All event types"
           />
           <StatCard
             label="Active Projects"
-            value={stats.active_projects}
+            value={safeStats.active_projects}
             icon={FolderOpen}
             description="Distinct project directories"
           />
           <StatCard
             label="Error Rate"
-            value={`${stats.error_rate}%`}
+            value={`${safeStats.error_rate}%`}
             icon={AlertTriangle}
             description="of all events"
             valueClassName={errorRateColor}

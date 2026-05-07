@@ -15,6 +15,7 @@ export async function GET(
         SUBSTRING_INDEX(s.project_dir, '/', -1) AS project_name,
         COUNT(e.id) AS event_count,
         COALESCE(SUM(e.is_error), 0) AS error_count,
+        COALESCE(SUM(e.total_tokens), 0) AS total_tokens,
         TIMESTAMPDIFF(SECOND, s.started_at, s.last_seen_at) AS duration_seconds
       FROM cc_sessions s
       LEFT JOIN cc_events e ON s.session_id = e.session_id
@@ -31,6 +32,7 @@ export async function GET(
       ...session,
       event_count: Number(session.event_count),
       error_count: Number(session.error_count),
+      total_tokens: Number(session.total_tokens),
       duration_seconds: Number(session.duration_seconds),
     });
   } catch (error) {

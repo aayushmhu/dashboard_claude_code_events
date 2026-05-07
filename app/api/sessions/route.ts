@@ -33,7 +33,8 @@ export async function GET(request: NextRequest) {
         COUNT(e.id) AS event_count,
         COALESCE(SUM(e.is_error), 0) AS error_count,
         TIMESTAMPDIFF(SECOND, s.started_at, s.last_seen_at) AS duration_seconds,
-        GROUP_CONCAT(DISTINCT e.tool_name ORDER BY e.tool_name SEPARATOR ',') AS tools_used_raw
+        GROUP_CONCAT(DISTINCT e.tool_name ORDER BY e.tool_name SEPARATOR ',') AS tools_used_raw,
+        COALESCE(SUM(e.total_tokens), 0) AS total_tokens
       FROM cc_sessions s
       LEFT JOIN cc_events e ON s.session_id = e.session_id
       ${whereClause}
@@ -57,6 +58,7 @@ export async function GET(request: NextRequest) {
       event_count: Number(r.event_count),
       error_count: Number(r.error_count),
       duration_seconds: Number(r.duration_seconds),
+      total_tokens: Number(r.total_tokens),
       tools_used: r.tools_used_raw
         ? r.tools_used_raw.split(',').filter(Boolean)
         : [],

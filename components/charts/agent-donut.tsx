@@ -39,6 +39,8 @@ export function AgentDonut({ data }: AgentDonutProps) {
             borderRadius: '8px',
             fontSize: '12px',
           }}
+          labelStyle={{ color: 'hsl(210, 40%, 98%)', fontWeight: 500 }}
+          itemStyle={{ color: 'hsl(210, 40%, 98%)' }}
         />
         <Legend
           wrapperStyle={{ fontSize: '12px' }}

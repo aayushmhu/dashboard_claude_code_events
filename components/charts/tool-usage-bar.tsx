@@ -46,6 +46,8 @@ export function ToolUsageBar({ data }: ToolUsageBarProps) {
             borderRadius: '8px',
             fontSize: '12px',
           }}
+          labelStyle={{ color: 'hsl(210, 40%, 98%)', fontWeight: 500 }}
+          itemStyle={{ color: 'hsl(210, 40%, 98%)' }}
           cursor={{ fill: 'hsl(217.2, 32.6%, 17.5%)' }}
         />
         <Bar dataKey="total_calls" name="Calls" radius={[0, 4, 4, 0]} barSize={20}>

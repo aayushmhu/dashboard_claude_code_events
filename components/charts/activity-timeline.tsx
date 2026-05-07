@@ -62,6 +62,8 @@ export function ActivityTimeline({ data }: ActivityTimelineProps) {
             borderRadius: '8px',
             fontSize: '12px',
           }}
+          labelStyle={{ color: 'hsl(210, 40%, 98%)', fontWeight: 500 }}
+          itemStyle={{ color: 'hsl(210, 40%, 98%)' }}
           labelFormatter={formatTick}
         />
         <Legend

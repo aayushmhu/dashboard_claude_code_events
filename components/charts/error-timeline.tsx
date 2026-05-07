@@ -57,6 +57,8 @@ export function ErrorTimeline({ errors }: ErrorTimelineProps) {
             borderRadius: '8px',
             fontSize: '12px',
           }}
+          labelStyle={{ color: 'hsl(210, 40%, 98%)', fontWeight: 500 }}
+          itemStyle={{ color: 'hsl(210, 40%, 98%)' }}
           cursor={{ fill: 'hsl(217.2, 32.6%, 17.5%)' }}
         />
         <Bar dataKey="count" name="Errors" fill={CHART_COLORS.rose} radius={[4, 4, 0, 0]} />

@@ -10,6 +10,7 @@ export interface Session {
   tools_used: string[];
   duration_seconds: number;
   agent_types: string[];
+  total_tokens: number;
 }
 
 export interface Event {
@@ -42,6 +43,7 @@ export interface ProjectStats {
   total_sessions: number;
   total_events: number;
   error_count: number;
+  total_tokens: number;
   top_tool: string | null;
   last_active: string;
 }

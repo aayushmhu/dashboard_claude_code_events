@@ -5,8 +5,8 @@ import { useRouter } from 'next/navigation';
 import { Session, Event } from '@/lib/types';
 import { ConversationThread } from '@/components/conversation-thread';
 import { Skeleton } from '@/components/ui/skeleton';
-import { formatRelativeTime, getProjectName, formatDuration } from '@/lib/utils';
-import { Search, MessageSquare, RefreshCw, Clock, AlertCircle, Zap } from 'lucide-react';
+import { formatRelativeTime, getProjectName, formatDuration, formatTokens } from '@/lib/utils';
+import { Search, MessageSquare, RefreshCw, Clock, AlertCircle, Zap, Coins } from 'lucide-react';
 
 interface ConversationsClientProps {
   sessions: Session[];
@@ -206,6 +206,13 @@ export function ConversationsClient({ sessions: initialSessions, selectedId }: C
                       <span>·</span>
                       <Zap className="h-3 w-3" />
                       <span>{events.length} events</span>
+                      {activeSession.total_tokens > 0 && (
+                        <>
+                          <span>·</span>
+                          <Coins className="h-3 w-3" />
+                          <span>{formatTokens(activeSession.total_tokens)}</span>
+                        </>
+                      )}
                       {activeSession.error_count > 0 && (
                         <>
                           <span>·</span>

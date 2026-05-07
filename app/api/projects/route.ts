@@ -11,6 +11,7 @@ export async function GET() {
         COUNT(DISTINCT s.session_id) AS total_sessions,
         COUNT(e.id) AS total_events,
         COALESCE(SUM(e.is_error), 0) AS error_count,
+        COALESCE(SUM(e.total_tokens), 0) AS total_tokens,
         MAX(e.timestamp) AS last_active
       FROM cc_sessions s
       LEFT JOIN cc_events e ON s.session_id = e.session_id
@@ -37,6 +38,7 @@ export async function GET() {
           total_sessions: Number(p.total_sessions),
           total_events: Number(p.total_events),
           error_count: Number(p.error_count),
+          total_tokens: Number(p.total_tokens),
           top_tool: topToolRow?.tool_name ?? null,
         };
       })

@@ -3,7 +3,7 @@
 import { useRouter } from 'next/navigation';
 import { Badge } from '@/components/ui/badge';
 import { Session } from '@/lib/types';
-import { formatRelativeTime, formatAbsoluteTime, formatDuration, truncateId } from '@/lib/utils';
+import { formatRelativeTime, formatAbsoluteTime, formatDuration, truncateId, formatTokens } from '@/lib/utils';
 import { Copy, AlertCircle } from 'lucide-react';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import { useState } from 'react';
@@ -50,6 +50,7 @@ export function SessionTable({ sessions }: SessionTableProps) {
             <th className="pb-3 pr-4 font-medium">Started</th>
             <th className="pb-3 pr-4 font-medium">Duration</th>
             <th className="pb-3 pr-4 font-medium">Events</th>
+            <th className="pb-3 pr-4 font-medium">Tokens</th>
             <th className="pb-3 pr-4 font-medium">Tools</th>
             <th className="pb-3 font-medium">Errors</th>
           </tr>
@@ -84,6 +85,9 @@ export function SessionTable({ sessions }: SessionTableProps) {
                   {formatDuration(session.duration_seconds)}
                 </td>
                 <td className="py-3 pr-4">{session.event_count}</td>
+                <td className="py-3 pr-4 text-muted-foreground">
+                  {session.total_tokens > 0 ? formatTokens(session.total_tokens) : '—'}
+                </td>
                 <td className="py-3 pr-4">
                   <div className="flex flex-wrap gap-1">
                     {session.tools_used?.slice(0, 3).map((tool) => (

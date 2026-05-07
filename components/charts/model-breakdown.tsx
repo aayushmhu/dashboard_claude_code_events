@@ -22,6 +22,7 @@ const TOOLTIP_STYLE = {
   border: '1px solid hsl(217.2, 32.6%, 17.5%)',
   borderRadius: '8px',
   fontSize: '12px',
+  color: 'hsl(210, 40%, 98%)',
 };
 
 export function ModelBreakdown({ data }: ModelBreakdownProps) {
@@ -50,10 +51,12 @@ export function ModelBreakdown({ data }: ModelBreakdownProps) {
         </Pie>
         <Tooltip
           contentStyle={TOOLTIP_STYLE}
-          formatter={(value: number, _name: string, props: { payload?: { cost?: number } }) => [
-            `${formatTokens(value)} tokens · ${formatCost(props.payload?.cost ?? 0)}`,
-            'Usage',
-          ]}
+          labelStyle={{ color: 'hsl(210, 40%, 98%)', fontWeight: 500 }}
+          itemStyle={{ color: 'hsl(210, 40%, 98%)' }}
+          formatter={(value: number, _name: string, entry: { payload?: { name?: string; cost?: number } }) => {
+            const cost = entry?.payload?.cost ?? 0;
+            return [`${formatTokens(value)} tokens · ${formatCost(cost)}`, 'Usage'];
+          }}
         />
         <Legend
           wrapperStyle={{ fontSize: '11px', paddingTop: '8px' }}

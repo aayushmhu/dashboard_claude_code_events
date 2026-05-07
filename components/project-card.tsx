@@ -3,7 +3,7 @@ import { FolderOpen, AlertCircle, Wrench, Clock } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { ProjectStats } from '@/lib/types';
-import { formatRelativeTime } from '@/lib/utils';
+import { formatRelativeTime, formatTokens } from '@/lib/utils';
 
 interface ProjectCardProps {
   project: ProjectStats;
@@ -31,7 +31,7 @@ export function ProjectCard({ project }: ProjectCardProps) {
             {project.project_dir}
           </p>
 
-          <div className="grid grid-cols-2 gap-3 text-sm">
+          <div className="grid grid-cols-3 gap-3 text-sm">
             <div>
               <p className="text-muted-foreground text-xs">Sessions</p>
               <p className="font-semibold">{project.total_sessions}</p>
@@ -39,6 +39,10 @@ export function ProjectCard({ project }: ProjectCardProps) {
             <div>
               <p className="text-muted-foreground text-xs">Events</p>
               <p className="font-semibold">{project.total_events}</p>
+            </div>
+            <div>
+              <p className="text-muted-foreground text-xs">Tokens</p>
+              <p className="font-semibold">{project.total_tokens > 0 ? formatTokens(project.total_tokens) : '—'}</p>
             </div>
           </div>
 

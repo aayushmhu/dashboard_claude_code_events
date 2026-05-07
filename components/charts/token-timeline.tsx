@@ -30,6 +30,7 @@ const TOOLTIP_STYLE = {
   border: '1px solid hsl(217.2, 32.6%, 17.5%)',
   borderRadius: '8px',
   fontSize: '12px',
+  color: 'hsl(210, 40%, 98%)',
 };
 
 export function TokenTimeline({ data }: TokenTimelineProps) {
@@ -67,6 +68,8 @@ export function TokenTimeline({ data }: TokenTimelineProps) {
         />
         <Tooltip
           contentStyle={TOOLTIP_STYLE}
+          labelStyle={{ color: 'hsl(210, 40%, 98%)', fontWeight: 500 }}
+          itemStyle={{ color: 'hsl(210, 40%, 98%)' }}
           labelFormatter={formatTick}
           formatter={(value: number, name: string) => [formatTokens(value), name]}
         />

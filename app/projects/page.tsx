@@ -30,7 +30,7 @@ export default async function ProjectsPage() {
           </div>
         ) : (
           <>
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3 lg:grid-cols-4">
               {projects.map((p) => (
                 <ProjectCard key={p.project_dir} project={p} />
               ))}

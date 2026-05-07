@@ -6,20 +6,26 @@ import Link from 'next/link';
 import { AlertCircle, ArrowLeft } from 'lucide-react';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 
-async function getData(name: string) {
+async function getData(name: string, errorsOnly: boolean) {
   const base = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
-  return fetch(`${base}/api/tools/${encodeURIComponent(name)}?limit=50`, {
+  const params = new URLSearchParams({ limit: '50' });
+  if (errorsOnly) params.set('errors_only', 'true');
+  return fetch(`${base}/api/tools/${encodeURIComponent(name)}?${params}`, {
     cache: 'no-store',
   }).then((r) => r.json());
 }
 
 export default async function ToolDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ name: string }>;
+  searchParams: Promise<{ errors_only?: string }>;
 }) {
   const { name } = await params;
-  const calls = await getData(name);
+  const sp = await searchParams;
+  const errorsOnly = sp.errors_only === 'true';
+  const calls = await getData(name, errorsOnly);
 
   return (
     <div className="flex flex-col h-full">
@@ -35,9 +41,16 @@ export default async function ToolDetailPage({
 
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium">
-              {calls.length} recent call{calls.length !== 1 ? 's' : ''}
-            </CardTitle>
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-sm font-medium">
+                {calls.length} {errorsOnly ? 'failed' : 'recent'} call{calls.length !== 1 ? 's' : ''}
+              </CardTitle>
+              {errorsOnly && (
+                <a href={`/tools/${encodeURIComponent(name)}`} className="text-xs text-muted-foreground hover:text-foreground transition-colors">
+                  Show all calls
+                </a>
+              )}
+            </div>
           </CardHeader>
           <CardContent>
             {calls.length === 0 ? (

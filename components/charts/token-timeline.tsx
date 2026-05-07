@@ -7,10 +7,13 @@ import {
   YAxis,
   Tooltip,
   ResponsiveContainer,
+  CartesianGrid,
+  Brush,
   Legend,
 } from 'recharts';
 import { TokenTimelinePoint } from '@/lib/types';
-import { CHART_COLORS, formatTokens } from '@/lib/utils';
+import { CHART_COLORS, formatTokens, formatCost, CT, AXIS_TICK, GRID_STROKE } from '@/lib/utils';
+import { TOKEN_COLORS } from '@/lib/colors';
 import { format } from 'date-fns';
 
 interface TokenTimelineProps {
@@ -25,82 +28,96 @@ function formatTick(value: string) {
   }
 }
 
-const TOOLTIP_STYLE = {
-  backgroundColor: 'hsl(222.2, 47.4%, 11.2%)',
-  border: '1px solid hsl(217.2, 32.6%, 17.5%)',
-  borderRadius: '8px',
-  fontSize: '12px',
-  color: 'hsl(210, 40%, 98%)',
-};
+const SERIES = [
+  { key: 'input_tokens',      name: 'Input',      color: TOKEN_COLORS.input },
+  { key: 'output_tokens',     name: 'Output',     color: TOKEN_COLORS.output },
+  { key: 'cache_read_tokens', name: 'Cache Read', color: TOKEN_COLORS.cacheRead },
+];
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function CustomTooltip({ active, payload, label }: any) {
+  if (!active || !payload?.length) return null;
+  const filtered = payload.filter((p: { value: number }) => p.value > 0);
+  if (!filtered.length) return null;
+  const totalCost = (payload[0]?.payload as TokenTimelinePoint)?.cost ?? 0;
+  return (
+    <div style={{ ...CT.box, minWidth: '180px', padding: '12px 14px' }}>
+      <p style={{ ...CT.label, marginBottom: 10 }}>{formatTick(label)}</p>
+      {filtered.map((entry: { name: string; value: number; color: string }, i: number) => (
+        <div key={entry.name} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: i < filtered.length - 1 ? 5 : 0 }}>
+          <div style={CT.dot(entry.color)} />
+          <span style={{ ...CT.name, flex: 1 }}>{entry.name}</span>
+          <span style={{ ...CT.val, marginLeft: 12 }}>{formatTokens(entry.value)}</span>
+        </div>
+      ))}
+      {totalCost > 0 && (
+        <div style={CT.divider}>
+          <span style={CT.name}>Cost</span>
+          <span style={{ ...CT.val, color: CHART_COLORS.amber }}>{formatCost(totalCost)}</span>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function TokenTimeline({ data }: TokenTimelineProps) {
+  const showBrush = data.length > 14;
+
   return (
-    <ResponsiveContainer width="100%" height={240}>
-      <AreaChart data={data} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
+    <ResponsiveContainer width="100%" height={260}>
+      <AreaChart data={data} margin={{ top: 8, right: 4, left: 0, bottom: 0 }}>
         <defs>
-          <linearGradient id="grad-input" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="5%" stopColor={CHART_COLORS.blue} stopOpacity={0.25} />
-            <stop offset="95%" stopColor={CHART_COLORS.blue} stopOpacity={0} />
-          </linearGradient>
-          <linearGradient id="grad-output" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="5%" stopColor={CHART_COLORS.rose} stopOpacity={0.25} />
-            <stop offset="95%" stopColor={CHART_COLORS.rose} stopOpacity={0} />
-          </linearGradient>
-          <linearGradient id="grad-cache-read" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="5%" stopColor={CHART_COLORS.emerald} stopOpacity={0.25} />
-            <stop offset="95%" stopColor={CHART_COLORS.emerald} stopOpacity={0} />
-          </linearGradient>
+          {SERIES.map(({ key, color }) => (
+            <linearGradient key={key} id={`tgrad-${key}`} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor={color} stopOpacity={0.3} />
+              <stop offset="100%" stopColor={color} stopOpacity={0} />
+            </linearGradient>
+          ))}
         </defs>
+        <CartesianGrid strokeDasharray="3 3" stroke={GRID_STROKE} vertical={false} />
         <XAxis
           dataKey="time"
           tickFormatter={formatTick}
-          tick={{ fontSize: 11, fill: 'hsl(215, 20%, 55%)' }}
+          tick={AXIS_TICK}
           axisLine={false}
           tickLine={false}
           interval="preserveStartEnd"
         />
         <YAxis
           tickFormatter={(v) => formatTokens(v)}
-          tick={{ fontSize: 11, fill: 'hsl(215, 20%, 55%)' }}
+          tick={AXIS_TICK}
           axisLine={false}
           tickLine={false}
-          width={50}
+          width={52}
         />
-        <Tooltip
-          contentStyle={TOOLTIP_STYLE}
-          labelStyle={{ color: 'hsl(210, 40%, 98%)', fontWeight: 500 }}
-          itemStyle={{ color: 'hsl(210, 40%, 98%)' }}
-          labelFormatter={formatTick}
-          formatter={(value: number, name: string) => [formatTokens(value), name]}
+        <Tooltip content={<CustomTooltip />} cursor={{ stroke: 'hsl(var(--border))', strokeWidth: 1 }} />
+        <Legend
+          wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }}
+          formatter={(value) => <span style={{ color: 'hsl(var(--muted-foreground))' }}>{value}</span>}
         />
-        <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '8px' }} />
-        <Area
-          type="monotone"
-          dataKey="input_tokens"
-          name="Input"
-          stroke={CHART_COLORS.blue}
-          fill="url(#grad-input)"
-          strokeWidth={1.5}
-          dot={false}
-        />
-        <Area
-          type="monotone"
-          dataKey="output_tokens"
-          name="Output"
-          stroke={CHART_COLORS.rose}
-          fill="url(#grad-output)"
-          strokeWidth={1.5}
-          dot={false}
-        />
-        <Area
-          type="monotone"
-          dataKey="cache_read_tokens"
-          name="Cache Read"
-          stroke={CHART_COLORS.emerald}
-          fill="url(#grad-cache-read)"
-          strokeWidth={1.5}
-          dot={false}
-        />
+        {SERIES.map(({ key, name, color }) => (
+          <Area
+            key={key}
+            type="monotone"
+            dataKey={key}
+            name={name}
+            stroke={color}
+            fill={`url(#tgrad-${key})`}
+            strokeWidth={2}
+            dot={false}
+            activeDot={{ r: 4, strokeWidth: 0 }}
+          />
+        ))}
+        {showBrush && (
+          <Brush
+            dataKey="time"
+            height={22}
+            stroke="hsl(var(--border))"
+            fill="hsl(var(--card))"
+            travellerWidth={5}
+            tickFormatter={formatTick}
+          />
+        )}
       </AreaChart>
     </ResponsiveContainer>
   );

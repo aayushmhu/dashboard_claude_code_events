@@ -8,7 +8,7 @@ const pool = mysql.createPool({
   database: process.env.DB_NAME || 'claude_logs',
   waitForConnections: true,
   connectionLimit: 10,
-  timezone: 'Z',
+  timezone: 'local',
 });
 
 export default pool;

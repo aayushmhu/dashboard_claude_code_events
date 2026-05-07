@@ -3,7 +3,17 @@ import pool from '@/lib/db';
 import { RowDataPacket } from 'mysql2';
 import { calcCost } from '@/lib/utils';
 
-export async function GET() {
+export async function GET(request: Request) {
+  const { searchParams } = new URL(request.url);
+  const start = searchParams.get('start') || '';
+  const end = searchParams.get('end') || '';
+
+  const dateConditions: string[] = ['(input_tokens IS NOT NULL OR output_tokens IS NOT NULL)'];
+  const dateParams: unknown[] = [];
+  if (start) { dateConditions.push('timestamp >= ?'); dateParams.push(start); }
+  if (end)   { dateConditions.push('timestamp < DATE_ADD(?, INTERVAL 1 DAY)'); dateParams.push(end); }
+  const whereClause = `WHERE ${dateConditions.join(' AND ')}`;
+
   try {
     const [[totalsRow]] = await pool.query<RowDataPacket[]>(
       `SELECT
@@ -11,9 +21,12 @@ export async function GET() {
         COALESCE(SUM(output_tokens), 0)           AS output_tokens,
         COALESCE(SUM(cache_creation_tokens), 0)   AS cache_write_tokens,
         COALESCE(SUM(cache_read_tokens), 0)       AS cache_read_tokens,
-        COALESCE(SUM(total_tokens), 0)            AS total_tokens
+        COALESCE(SUM(total_tokens), 0)            AS total_tokens,
+        MIN(timestamp)                            AS first_event_at,
+        MAX(timestamp)                            AS last_event_at
       FROM cc_events
-      WHERE input_tokens IS NOT NULL OR output_tokens IS NOT NULL`
+      ${whereClause}`,
+      dateParams
     );
 
     const inp  = Number(totalsRow.input_tokens);
@@ -23,6 +36,11 @@ export async function GET() {
     const tot  = Number(totalsRow.total_tokens);
     const cost = calcCost(inp, out, cw, cr);
     const cacheEfficiency = (inp + cr) > 0 ? (cr / (inp + cr)) * 100 : 0;
+
+    const projectDateConditions = ['(e.input_tokens IS NOT NULL OR e.output_tokens IS NOT NULL)'];
+    const projectDateParams: unknown[] = [];
+    if (start) { projectDateConditions.push('e.timestamp >= ?'); projectDateParams.push(start); }
+    if (end)   { projectDateConditions.push('e.timestamp < DATE_ADD(?, INTERVAL 1 DAY)'); projectDateParams.push(end); }
 
     const [byProject] = await pool.query<RowDataPacket[]>(
       `SELECT
@@ -35,9 +53,10 @@ export async function GET() {
         COALESCE(SUM(e.total_tokens), 0)          AS total_tokens
       FROM cc_events e
       JOIN cc_sessions s ON s.session_id = e.session_id
-      WHERE e.input_tokens IS NOT NULL OR e.output_tokens IS NOT NULL
+      WHERE ${projectDateConditions.join(' AND ')}
       GROUP BY s.project_dir
-      ORDER BY total_tokens DESC`
+      ORDER BY total_tokens DESC`,
+      projectDateParams
     );
 
     const [byModel] = await pool.query<RowDataPacket[]>(
@@ -50,9 +69,10 @@ export async function GET() {
         COALESCE(SUM(cache_read_tokens), 0)       AS cache_read_tokens,
         COALESCE(SUM(total_tokens), 0)            AS total_tokens
       FROM cc_events
-      WHERE input_tokens IS NOT NULL OR output_tokens IS NOT NULL
+      ${whereClause}
       GROUP BY model
-      ORDER BY total_tokens DESC`
+      ORDER BY total_tokens DESC`,
+      dateParams
     );
 
     const mapRow = (r: RowDataPacket) => {
@@ -81,6 +101,8 @@ export async function GET() {
         total_tokens: tot,
         total_cost: cost,
         cache_efficiency: Math.round(cacheEfficiency * 10) / 10,
+        first_event_at: totalsRow.first_event_at ?? null,
+        last_event_at: totalsRow.last_event_at ?? null,
       },
       by_project: byProject.map(mapRow),
       by_model: byModel.map(mapRow),

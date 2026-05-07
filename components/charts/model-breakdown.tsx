@@ -2,28 +2,38 @@
 
 import { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { ModelStats } from '@/lib/types';
-import { CHART_COLORS, formatTokens, formatCost } from '@/lib/utils';
+import { CHART_COLORS, formatTokens, formatCost, CT } from '@/lib/utils';
 
 interface ModelBreakdownProps {
   data: ModelStats[];
 }
 
 const COLORS = [
-  CHART_COLORS.blue,
-  CHART_COLORS.violet,
-  CHART_COLORS.rose,
-  CHART_COLORS.amber,
-  CHART_COLORS.emerald,
-  CHART_COLORS.indigo,
+  CHART_COLORS.blue, CHART_COLORS.violet, CHART_COLORS.rose,
+  CHART_COLORS.amber, CHART_COLORS.emerald, CHART_COLORS.indigo,
 ];
 
-const TOOLTIP_STYLE = {
-  backgroundColor: 'hsl(222.2, 47.4%, 11.2%)',
-  border: '1px solid hsl(217.2, 32.6%, 17.5%)',
-  borderRadius: '8px',
-  fontSize: '12px',
-  color: 'hsl(210, 40%, 98%)',
-};
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function CustomTooltip({ active, payload }: any) {
+  if (!active || !payload?.length) return null;
+  const entry = payload[0];
+  const cost = entry?.payload?.cost ?? 0;
+  return (
+    <div style={{ ...CT.box, minWidth: '170px' }}>
+      <p style={{ ...CT.label, marginBottom: 8 }}>{entry?.payload?.fullName ?? entry.name}</p>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+        <div style={CT.row}>
+          <span style={CT.name}>Tokens</span>
+          <span style={CT.val}>{formatTokens(entry.value)}</span>
+        </div>
+        <div style={CT.row}>
+          <span style={CT.name}>Cost</span>
+          <span style={{ ...CT.val, color: CHART_COLORS.amber }}>{formatCost(cost)}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export function ModelBreakdown({ data }: ModelBreakdownProps) {
   const chartData = data.map((d) => ({
@@ -41,26 +51,19 @@ export function ModelBreakdown({ data }: ModelBreakdownProps) {
           cx="50%"
           cy="50%"
           innerRadius={60}
-          outerRadius={90}
+          outerRadius={88}
           paddingAngle={3}
           dataKey="value"
+          strokeWidth={0}
         >
           {chartData.map((_, i) => (
-            <Cell key={i} fill={COLORS[i % COLORS.length]} />
+            <Cell key={i} fill={COLORS[i % COLORS.length]} fillOpacity={0.9} />
           ))}
         </Pie>
-        <Tooltip
-          contentStyle={TOOLTIP_STYLE}
-          labelStyle={{ color: 'hsl(210, 40%, 98%)', fontWeight: 500 }}
-          itemStyle={{ color: 'hsl(210, 40%, 98%)' }}
-          formatter={(value: number, _name: string, entry: { payload?: { name?: string; cost?: number } }) => {
-            const cost = entry?.payload?.cost ?? 0;
-            return [`${formatTokens(value)} tokens · ${formatCost(cost)}`, 'Usage'];
-          }}
-        />
+        <Tooltip content={<CustomTooltip />} />
         <Legend
           wrapperStyle={{ fontSize: '11px', paddingTop: '8px' }}
-          formatter={(value) => <span className="text-foreground">{value}</span>}
+          formatter={(value) => <span style={{ color: 'hsl(var(--muted-foreground))' }}>{value}</span>}
         />
       </PieChart>
     </ResponsiveContainer>

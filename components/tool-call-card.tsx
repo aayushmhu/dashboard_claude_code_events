@@ -2,9 +2,7 @@
 
 import { useState } from 'react';
 import { ChevronDown, ChevronRight, AlertCircle } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
-import { cn } from '@/lib/utils';
-import { TOOL_COLORS } from '@/lib/utils';
+import { TOOL_COLORS, BUBBLE_COLORS } from '@/lib/colors';
 
 interface ToolCallCardProps {
   toolName: string;
@@ -27,7 +25,10 @@ function JsonBlock({ data }: { data: unknown }) {
   }
 
   return (
-    <pre className="overflow-x-auto rounded-md bg-muted/50 p-3 text-xs font-mono text-foreground/80 whitespace-pre-wrap break-words">
+    <pre
+      className="overflow-x-auto rounded-md p-3 text-xs font-mono text-foreground/80 whitespace-pre-wrap break-words max-h-[200px] overflow-y-auto"
+      style={{ background: 'rgba(0,0,0,0.15)' }}
+    >
       {display}
     </pre>
   );
@@ -64,31 +65,49 @@ export function ToolCallCard({
   isError,
   errorMessage,
 }: ToolCallCardProps) {
-  const color = TOOL_COLORS[toolName] || 'hsl(215, 20%, 65%)';
+  const toolColor = TOOL_COLORS[toolName] || '#64748B';
+  const bubble = isError ? BUBBLE_COLORS.toolError : BUBBLE_COLORS.tool;
 
   return (
     <div
-      className={cn(
-        'rounded-lg border bg-card/50 p-3 space-y-2 text-sm',
-        isError ? 'border-destructive/40' : 'border-border'
-      )}
+      className="rounded-lg p-3 space-y-2 text-sm"
+      style={{
+        background: bubble.bg,
+        border: `1px solid ${bubble.border}`,
+      }}
     >
       <div className="flex items-center gap-2">
+        {/* Tool name badge */}
         <span
-          className="h-2 w-2 rounded-full shrink-0"
-          style={{ backgroundColor: color }}
-        />
-        <span className="font-medium text-xs">{toolName}</span>
+          className="text-[11px] font-semibold px-2 py-0.5 rounded"
+          style={{
+            background: `${toolColor}22`,
+            color: toolColor,
+            border: `1px solid ${toolColor}40`,
+          }}
+        >
+          {toolName}
+        </span>
         {isError && (
-          <Badge variant="destructive" className="gap-1 ml-auto">
+          <span
+            className="flex items-center gap-1 text-[11px] font-medium ml-auto px-2 py-0.5 rounded"
+            style={{
+              background: 'rgba(239,68,68,0.15)',
+              color: '#EF4444',
+              border: '1px solid rgba(239,68,68,0.35)',
+            }}
+          >
             <AlertCircle className="h-3 w-3" />
             Error
-          </Badge>
+          </span>
         )}
       </div>
 
       {isError && errorMessage && (
-        <p className="text-xs text-destructive bg-destructive/10 rounded p-2">
+        <p
+          className="text-xs rounded p-2 font-mono"
+          style={{ color: '#EF4444', background: 'rgba(239,68,68,0.08)' }}
+        >
           {errorMessage}
         </p>
       )}

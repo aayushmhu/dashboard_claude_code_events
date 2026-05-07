@@ -35,6 +35,11 @@ export interface Event {
   error_message: string | null;
   raw_payload: Record<string, unknown>;
   transcript_path: string | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  cache_creation_tokens: number | null;
+  cache_read_tokens: number | null;
+  total_tokens: number | null;
 }
 
 export interface ProjectStats {
@@ -67,6 +72,8 @@ export interface TokenTotals {
   total_tokens: number;
   total_cost: number;
   cache_efficiency: number;
+  first_event_at: string | null;
+  last_event_at: string | null;
 }
 
 export interface ProjectTokenStats {

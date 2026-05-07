@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ActivityTimeline } from '@/components/charts/activity-timeline';
 import { ToolUsageBar } from '@/components/charts/tool-usage-bar';
 import { AgentDonut } from '@/components/charts/agent-donut';
+import { ActivityHeatmap } from '@/components/charts/activity-heatmap';
 import { SessionTable } from '@/components/session-table';
 import {
   Activity,
@@ -17,25 +18,27 @@ import Link from 'next/link';
 
 async function getData() {
   const base = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
-  const [stats, timeline, tools, sessionsRes, agents, tokens] = await Promise.all([
+  const [stats, timeline, tools, sessionsRes, agents, tokens, heatmap] = await Promise.all([
     fetch(`${base}/api/stats`, { cache: 'no-store' }).then((r) => r.json()).catch(() => ({})),
     fetch(`${base}/api/events/timeline?days=7`, { cache: 'no-store' }).then((r) => r.json()).catch(() => []),
     fetch(`${base}/api/tools`, { cache: 'no-store' }).then((r) => r.json()).catch(() => []),
     fetch(`${base}/api/sessions?limit=10`, { cache: 'no-store' }).then((r) => r.json()).catch(() => ({ sessions: [] })),
     fetch(`${base}/api/agents`, { cache: 'no-store' }).then((r) => r.json()).catch(() => []),
     fetch(`${base}/api/tokens`, { cache: 'no-store' }).then((r) => r.json()).catch(() => ({ totals: null, by_model: [] })),
+    fetch(`${base}/api/activity/heatmap`, { cache: 'no-store' }).then((r) => r.json()).catch(() => []),
   ]);
-  return { stats, timeline, tools, sessions: sessionsRes.sessions ?? [], agents, tokens };
+  return { stats, timeline, tools, sessions: sessionsRes.sessions ?? [], agents, tokens, heatmap };
 }
 
 export default async function DashboardPage() {
-  const { stats, timeline, tools, sessions, agents, tokens } = (await getData()) as {
+  const { stats, timeline, tools, sessions, agents, tokens, heatmap } = (await getData()) as {
     stats: StatsOverview;
     timeline: TimelinePoint[];
     tools: ToolStats[];
     sessions: Session[];
     agents: AgentStats[];
     tokens: { totals: TokenTotals; by_model: ModelStats[] };
+    heatmap: { day: string; count: number }[];
   };
 
   const safeStats: StatsOverview = {
@@ -141,14 +144,24 @@ export default async function DashboardPage() {
           </Card>
         </div>
 
+        {/* Activity heatmap */}
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium">Activity — Last 52 Weeks</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ActivityHeatmap data={Array.isArray(heatmap) ? heatmap : []} />
+          </CardContent>
+        </Card>
+
         {/* Bottom row */}
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-          <Card className="lg:col-span-2">
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+          <Card className="xl:col-span-2">
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-medium">Recent Sessions</CardTitle>
             </CardHeader>
             <CardContent>
-              <SessionTable sessions={sessions} />
+              <SessionTable sessions={sessions} hideTools />
             </CardContent>
           </Card>
 

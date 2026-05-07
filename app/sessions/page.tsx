@@ -8,6 +8,8 @@ interface SearchParams {
   project?: string;
   page?: string;
   has_errors?: string;
+  start?: string;
+  end?: string;
 }
 
 async function getData(searchParams: SearchParams) {
@@ -16,6 +18,8 @@ async function getData(searchParams: SearchParams) {
   if (searchParams.project) params.set('project', searchParams.project);
   if (searchParams.page) params.set('page', searchParams.page);
   if (searchParams.has_errors) params.set('has_errors', searchParams.has_errors);
+  if (searchParams.start) params.set('start', searchParams.start);
+  if (searchParams.end) params.set('end', searchParams.end);
   params.set('limit', '20');
 
   const [sessionsRes, projects] = await Promise.all([
@@ -89,6 +93,8 @@ function PaginationLinks({
     const params = new URLSearchParams();
     if (searchParams.project) params.set('project', searchParams.project);
     if (searchParams.has_errors) params.set('has_errors', searchParams.has_errors);
+    if (searchParams.start) params.set('start', searchParams.start);
+    if (searchParams.end) params.set('end', searchParams.end);
     params.set('page', String(p));
     return `/sessions?${params}`;
   };

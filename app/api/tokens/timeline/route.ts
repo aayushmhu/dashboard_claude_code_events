@@ -7,6 +7,13 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const granularity = searchParams.get('granularity') || 'day'; // 'hour' | 'day'
   const fmt = granularity === 'hour' ? '%Y-%m-%d %H:00:00' : '%Y-%m-%d';
+  const start = searchParams.get('start') || '';
+  const end = searchParams.get('end') || '';
+
+  const conditions: string[] = ['(input_tokens IS NOT NULL OR output_tokens IS NOT NULL)'];
+  const params: unknown[] = [fmt];
+  if (start) { conditions.push('timestamp >= ?'); params.push(start); }
+  if (end)   { conditions.push('timestamp < DATE_ADD(?, INTERVAL 1 DAY)'); params.push(end); }
 
   try {
     const [rows] = await pool.query<RowDataPacket[]>(
@@ -18,10 +25,10 @@ export async function GET(request: Request) {
         COALESCE(SUM(cache_read_tokens), 0)       AS cache_read_tokens,
         COALESCE(SUM(total_tokens), 0)            AS total_tokens
       FROM cc_events
-      WHERE input_tokens IS NOT NULL OR output_tokens IS NOT NULL
+      WHERE ${conditions.join(' AND ')}
       GROUP BY time
       ORDER BY time ASC`,
-      [fmt]
+      params
     );
 
     const data = rows.map((r) => {

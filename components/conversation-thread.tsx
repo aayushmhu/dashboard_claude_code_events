@@ -1,7 +1,8 @@
 'use client';
 
 import { Event } from '@/lib/types';
-import { formatRelativeTime, formatAbsoluteTime } from '@/lib/utils';
+import { formatRelativeTime, formatAbsoluteTime, formatTokens, calcCost, formatCost } from '@/lib/utils';
+import { BUBBLE_COLORS, ROLE_COLORS } from '@/lib/colors';
 import { ToolCallCard } from '@/components/tool-call-card';
 import { Badge } from '@/components/ui/badge';
 import ReactMarkdown from 'react-markdown';
@@ -52,9 +53,17 @@ export function ConversationThread({ events }: ConversationThreadProps) {
     if (event.event_type === 'Notification') {
       rendered.push(
         <div key={event.id} className="flex justify-center my-3">
-          <div className="flex items-center gap-1.5 text-xs text-muted-foreground bg-muted/40 border border-border/40 rounded-full px-3 py-1.5">
+          <div
+            className="flex items-center gap-1.5 text-xs rounded-full px-3 py-1.5"
+            style={{
+              background: BUBBLE_COLORS.system.bg,
+              border: `1px solid ${BUBBLE_COLORS.system.border}`,
+              color: ROLE_COLORS.system,
+              fontStyle: 'italic',
+            }}
+          >
             <BellRing className="h-3 w-3" />
-            <span>{event.content}</span>
+            <span className="text-foreground/70">{event.content}</span>
           </div>
         </div>
       );
@@ -66,12 +75,18 @@ export function ConversationThread({ events }: ConversationThreadProps) {
         <div key={event.id} className="flex flex-col items-end gap-1.5 my-4 px-4">
           <div className="flex items-center gap-2">
             <Timestamp ts={event.timestamp} />
-            <div className="flex items-center gap-1 text-xs text-muted-foreground font-medium">
+            <div className="flex items-center gap-1 text-xs font-medium" style={{ color: ROLE_COLORS.user }}>
               <User className="h-3 w-3" />
               <span>You</span>
             </div>
           </div>
-          <div className="max-w-[78%] rounded-2xl rounded-tr-md bg-primary px-4 py-3 text-sm text-primary-foreground shadow-sm">
+          <div
+            className="max-w-[78%] rounded-2xl rounded-tr-md px-4 py-3 text-sm text-foreground"
+            style={{
+              background: BUBBLE_COLORS.user.bg,
+              border: `1px solid ${BUBBLE_COLORS.user.border}`,
+            }}
+          >
             {event.content}
           </div>
         </div>
@@ -80,18 +95,23 @@ export function ConversationThread({ events }: ConversationThreadProps) {
     }
 
     if (event.event_type === 'Stop' || event.event_type === 'SubagentStop') {
-      const agentType =
-        event.event_type === 'SubagentStop'
-          ? (event.raw_payload as Record<string, unknown>)?.agent_type as string | undefined
-          : null;
+      const isSubagent = event.event_type === 'SubagentStop';
+      const agentType = isSubagent
+        ? (event.raw_payload as Record<string, unknown>)?.agent_type as string | undefined
+        : null;
       const label = agentType ? `${agentType}` : 'Claude';
+      const bubble = isSubagent ? BUBBLE_COLORS.subagent : BUBBLE_COLORS.assistant;
+      const iconColor = isSubagent ? ROLE_COLORS.subagent : ROLE_COLORS.assistant;
 
       rendered.push(
         <div key={event.id} className="flex flex-col items-start gap-1.5 my-4 px-4">
           <div className="flex items-center gap-2">
-            <div className="flex items-center gap-1.5 text-xs text-muted-foreground font-medium">
-              <div className="w-5 h-5 rounded-full bg-violet-500/15 flex items-center justify-center">
-                <Bot className="h-3 w-3 text-violet-400" />
+            <div className="flex items-center gap-1.5 text-xs font-medium" style={{ color: iconColor }}>
+              <div
+                className="w-5 h-5 rounded-full flex items-center justify-center"
+                style={{ background: `${iconColor}20` }}
+              >
+                <Bot className="h-3 w-3" style={{ color: iconColor }} />
               </div>
               <span>{label}</span>
               {agentType && (
@@ -102,11 +122,27 @@ export function ConversationThread({ events }: ConversationThreadProps) {
             </div>
             <Timestamp ts={event.timestamp} />
           </div>
-          <div className="max-w-[82%] rounded-2xl rounded-tl-md border border-border bg-card px-4 py-3 text-sm shadow-sm">
+          <div
+            className="max-w-[82%] rounded-2xl rounded-tl-md px-4 py-3 text-sm"
+            style={{
+              background: bubble.bg,
+              border: `1px solid ${bubble.border}`,
+            }}
+          >
             <div className="prose prose-sm dark:prose-invert max-w-none prose-p:leading-relaxed prose-p:my-1 prose-pre:my-2 prose-headings:my-2">
               <ReactMarkdown>{event.content || ''}</ReactMarkdown>
             </div>
           </div>
+          {event.total_tokens ? (
+            <div className="ml-1 mt-0.5">
+              <span className="text-[10px] text-muted-foreground/50 bg-muted/30 border border-border/20 rounded-full px-2 py-0.5 font-mono">
+                {formatTokens(event.total_tokens)} tokens
+                {event.input_tokens && event.output_tokens
+                  ? ` · ${formatCost(calcCost(event.input_tokens, event.output_tokens, event.cache_creation_tokens ?? 0, event.cache_read_tokens ?? 0))}`
+                  : ''}
+              </span>
+            </div>
+          ) : null}
         </div>
       );
       continue;

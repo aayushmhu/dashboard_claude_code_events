@@ -7,10 +7,11 @@ import {
   YAxis,
   Tooltip,
   ResponsiveContainer,
-  Legend,
+  CartesianGrid,
+  Brush,
 } from 'recharts';
 import { TimelinePoint } from '@/lib/types';
-import { EVENT_TYPE_COLORS } from '@/lib/utils';
+import { EVENT_TYPE_COLORS, CT, AXIS_TICK, GRID_STROKE } from '@/lib/utils';
 import { format } from 'date-fns';
 
 interface ActivityTimelineProps {
@@ -18,6 +19,14 @@ interface ActivityTimelineProps {
 }
 
 const EVENT_TYPES = ['UserPromptSubmit', 'Stop', 'PostToolUse', 'SubagentStop', 'Notification'];
+
+const EVENT_LABELS: Record<string, string> = {
+  UserPromptSubmit: 'Prompts',
+  Stop: 'Responses',
+  PostToolUse: 'Tool Calls',
+  SubagentStop: 'Subagents',
+  Notification: 'Notifications',
+};
 
 function formatTick(value: string) {
   try {
@@ -27,49 +36,57 @@ function formatTick(value: string) {
   }
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function CustomTooltip({ active, payload, label }: any) {
+  if (!active || !payload?.length) return null;
+  const filtered = payload.filter((p: { value: number }) => p.value > 0);
+  if (!filtered.length) return null;
+  return (
+    <div style={{ ...CT.box, minWidth: '160px', padding: '12px 14px' }}>
+      <p style={{ ...CT.label, marginBottom: 10 }}>{formatTick(label)}</p>
+      {filtered.map((entry: { name: string; value: number; color: string }, i: number) => (
+        <div key={entry.name} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: i < filtered.length - 1 ? 5 : 0 }}>
+          <div style={CT.dot(entry.color)} />
+          <span style={{ ...CT.name, flex: 1 }}>{EVENT_LABELS[entry.name] ?? entry.name}</span>
+          <span style={{ ...CT.val, marginLeft: 12 }}>{entry.value}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function ActivityTimeline({ data }: ActivityTimelineProps) {
   const presentTypes = EVENT_TYPES.filter((et) => data.some((d) => d[et] !== undefined));
+  const showBrush = data.length > 20;
 
   return (
-    <ResponsiveContainer width="100%" height={220}>
-      <AreaChart data={data} margin={{ top: 5, right: 10, left: -20, bottom: 0 }}>
+    <ResponsiveContainer width="100%" height={240}>
+      <AreaChart data={data} margin={{ top: 8, right: 4, left: -22, bottom: 0 }}>
         <defs>
           {presentTypes.map((et) => (
             <linearGradient key={et} id={`grad-${et}`} x1="0" y1="0" x2="0" y2="1">
-              <stop offset="5%" stopColor={EVENT_TYPE_COLORS[et]} stopOpacity={0.3} />
-              <stop offset="95%" stopColor={EVENT_TYPE_COLORS[et]} stopOpacity={0} />
+              <stop offset="0%" stopColor={EVENT_TYPE_COLORS[et]} stopOpacity={0.35} />
+              <stop offset="100%" stopColor={EVENT_TYPE_COLORS[et]} stopOpacity={0} />
             </linearGradient>
           ))}
         </defs>
+        <CartesianGrid strokeDasharray="3 3" stroke={GRID_STROKE} vertical={false} />
         <XAxis
           dataKey="time"
           tickFormatter={formatTick}
-          tick={{ fontSize: 11, fill: 'hsl(215, 20%, 55%)' }}
+          tick={AXIS_TICK}
           axisLine={false}
           tickLine={false}
           interval="preserveStartEnd"
         />
         <YAxis
-          tick={{ fontSize: 11, fill: 'hsl(215, 20%, 55%)' }}
+          tick={AXIS_TICK}
           axisLine={false}
           tickLine={false}
           allowDecimals={false}
+          width={28}
         />
-        <Tooltip
-          contentStyle={{
-            backgroundColor: 'hsl(222.2, 47.4%, 11.2%)',
-            border: '1px solid hsl(217.2, 32.6%, 17.5%)',
-            borderRadius: '8px',
-            fontSize: '12px',
-          }}
-          labelStyle={{ color: 'hsl(210, 40%, 98%)', fontWeight: 500 }}
-          itemStyle={{ color: 'hsl(210, 40%, 98%)' }}
-          labelFormatter={formatTick}
-        />
-        <Legend
-          wrapperStyle={{ fontSize: '11px', paddingTop: '8px' }}
-          formatter={(value) => value}
-        />
+        <Tooltip content={<CustomTooltip />} cursor={{ stroke: 'hsl(var(--border))', strokeWidth: 1 }} />
         {presentTypes.map((et) => (
           <Area
             key={et}
@@ -78,11 +95,21 @@ export function ActivityTimeline({ data }: ActivityTimelineProps) {
             name={et}
             stroke={EVENT_TYPE_COLORS[et]}
             fill={`url(#grad-${et})`}
-            strokeWidth={1.5}
+            strokeWidth={2}
             dot={false}
-            activeDot={{ r: 3 }}
+            activeDot={{ r: 4, strokeWidth: 0 }}
           />
         ))}
+        {showBrush && (
+          <Brush
+            dataKey="time"
+            height={22}
+            stroke="hsl(var(--border))"
+            fill="hsl(var(--card))"
+            travellerWidth={5}
+            tickFormatter={formatTick}
+          />
+        )}
       </AreaChart>
     </ResponsiveContainer>
   );

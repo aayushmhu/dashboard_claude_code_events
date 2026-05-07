@@ -77,7 +77,18 @@ export default async function ToolsPage() {
                           </Link>
                         </td>
                         <td className="py-3 pr-6 text-right text-muted-foreground">{tool.total_calls.toLocaleString()}</td>
-                        <td className="py-3 pr-6 text-right text-muted-foreground">{tool.error_count}</td>
+                        <td className="py-3 pr-6 text-right text-muted-foreground">
+                          {tool.error_count > 0 ? (
+                            <Link
+                              href={`/tools/${encodeURIComponent(tool.tool_name)}?errors_only=true`}
+                              className="text-destructive hover:underline"
+                            >
+                              {tool.error_count}
+                            </Link>
+                          ) : (
+                            0
+                          )}
+                        </td>
                         <td className="py-3 pr-6 text-right">
                           {tool.error_rate > 0 ? (
                             <span className="text-destructive">{tool.error_rate}%</span>

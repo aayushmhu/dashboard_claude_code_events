@@ -11,14 +11,12 @@ export function getProjectName(projectDir: string): string {
   return projectDir.split('/').filter(Boolean).pop() || projectDir;
 }
 
-// MySQL returns timestamps as "YYYY-MM-DD HH:mm:ss" with no timezone suffix.
-// Without correction, new Date() treats them as local time instead of UTC,
-// causing times to appear offset by the local UTC offset (e.g. +5:30 for IST).
-function parseDbDate(dateStr: string): Date {
+// MySQL returns timestamps as "YYYY-MM-DD HH:mm:ss" in local time.
+// Replace the space separator so JS Date parses it as local time (no Z suffix).
+export function parseDbDate(dateStr: string): Date {
   if (!dateStr) return new Date(NaN);
-  // "2026-05-07 10:00:00" or "2026-05-07 10:00:00.000" — no tz info → treat as UTC
   if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(dateStr)) {
-    return new Date(dateStr.replace(' ', 'T') + 'Z');
+    return new Date(dateStr.replace(' ', 'T'));
   }
   return new Date(dateStr);
 }
@@ -92,6 +90,10 @@ export function calcCost(
   );
 }
 
+export function calcCacheSavings(cacheRead: number): number {
+  return cacheRead * (TOKEN_PRICING.input - TOKEN_PRICING.cache_read);
+}
+
 export function truncateId(id: string, length = 8): string {
   if (id.length <= length) return id;
   return id.slice(0, length) + '…';
@@ -113,22 +115,73 @@ export const CHART_COLORS = {
 } as const;
 
 export const EVENT_TYPE_COLORS: Record<string, string> = {
-  UserPromptSubmit: CHART_COLORS.blue,
-  Stop: CHART_COLORS.indigo,
-  SubagentStop: CHART_COLORS.violet,
-  PostToolUse: CHART_COLORS.emerald,
-  PreToolUse: CHART_COLORS.slate,
-  Notification: CHART_COLORS.amber,
-  SessionStart: CHART_COLORS.slate,
+  SessionStart:     '#6366F1',
+  UserPromptSubmit: '#3B82F6',
+  Stop:             '#10B981',
+  SubagentStop:     '#8B5CF6',
+  PreToolUse:       '#F59E0B',
+  PostToolUse:      '#F59E0B',
+  Notification:     '#64748B',
 };
 
+// Shared chart styles using CSS variables — work in both light and dark mode
+export const CT = {
+  box: {
+    background: 'hsl(var(--card))',
+    border: '1px solid hsl(var(--border))',
+    borderRadius: '10px',
+    padding: '10px 14px',
+    boxShadow: '0 4px 24px rgba(0,0,0,0.12)',
+    minWidth: '150px',
+  },
+  label: {
+    fontSize: 11,
+    color: 'hsl(var(--muted-foreground))',
+    marginBottom: 8,
+    fontWeight: 500,
+  },
+  row: {
+    display: 'flex' as const,
+    alignItems: 'center' as const,
+    gap: 8,
+    justifyContent: 'space-between' as const,
+  },
+  name: { fontSize: 11, color: 'hsl(var(--muted-foreground))' },
+  val: {
+    fontSize: 12,
+    color: 'hsl(var(--foreground))',
+    fontWeight: 700,
+    fontFamily: 'ui-monospace, monospace',
+  },
+  divider: {
+    marginTop: 8,
+    paddingTop: 8,
+    borderTop: '1px solid hsl(var(--border))',
+    display: 'flex' as const,
+    justifyContent: 'space-between' as const,
+  },
+  dot: (color: string) => ({
+    width: 7,
+    height: 7,
+    borderRadius: '50%',
+    background: color,
+    flexShrink: 0 as const,
+    marginRight: 0,
+  }),
+} as const;
+
+// Common axis tick style
+export const AXIS_TICK = { fontSize: 10, fill: 'hsl(var(--muted-foreground))' };
+// Common grid stroke
+export const GRID_STROKE = 'hsl(var(--border))';
+
 export const TOOL_COLORS: Record<string, string> = {
-  Write: CHART_COLORS.emerald,
-  Bash: CHART_COLORS.amber,
-  Read: CHART_COLORS.blue,
-  Agent: CHART_COLORS.violet,
-  Skill: CHART_COLORS.indigo,
-  Glob: CHART_COLORS.slate,
-  Edit: CHART_COLORS.rose,
-  Grep: CHART_COLORS.indigo,
+  Write: '#06B6D4',
+  Bash:  '#F97316',
+  Read:  '#A78BFA',
+  Agent: '#34D399',
+  Skill: '#FB7185',
+  Glob:  '#FBBF24',
+  Edit:  '#F472B6',
+  Grep:  '#818CF8',
 };

@@ -75,9 +75,15 @@ export default async function ErrorsPage({
                 }) => (
                   <div
                     key={err.id}
-                    className="flex gap-3 rounded-lg border border-destructive/20 bg-destructive/5 p-4 text-sm"
+                    className="flex gap-3 rounded-lg p-4 text-sm"
+                    style={{
+                      borderLeft: '3px solid #EF4444',
+                      background: 'rgba(239,68,68,0.05)',
+                      border: '1px solid rgba(239,68,68,0.20)',
+                      borderLeftWidth: '3px',
+                    }}
                   >
-                    <AlertCircle className="h-4 w-4 text-destructive shrink-0 mt-0.5" />
+                    <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" style={{ color: '#EF4444' }} />
                     <div className="flex-1 min-w-0 space-y-1.5">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-medium">{err.tool_name || 'Unknown tool'}</span>
@@ -99,7 +105,7 @@ export default async function ErrorsPage({
                         </Tooltip>
                       </div>
                       {err.error_message && (
-                        <p className="text-xs text-destructive/80 bg-destructive/10 rounded p-2">
+                        <p className="text-xs rounded p-2 font-mono" style={{ color: '#EF4444', background: 'rgba(239,68,68,0.08)' }}>
                           {err.error_message}
                         </p>
                       )}

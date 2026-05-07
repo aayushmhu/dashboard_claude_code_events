@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Session, Event } from '@/lib/types';
 import { ConversationThread } from '@/components/conversation-thread';
 import { Skeleton } from '@/components/ui/skeleton';
-import { formatRelativeTime, getProjectName, formatDuration, formatTokens } from '@/lib/utils';
+import { formatRelativeTime, getProjectName, formatDuration, formatTokens, parseDbDate } from '@/lib/utils';
 import { Search, MessageSquare, RefreshCw, Clock, AlertCircle, Zap, Coins } from 'lucide-react';
 
 interface ConversationsClientProps {
@@ -91,6 +91,11 @@ export function ConversationsClient({ sessions: initialSessions, selectedId }: C
 
   const activeSession = sessions.find((s) => s.session_id === activeId);
 
+  function isLive(lastSeenAt: string): boolean {
+    const d = parseDbDate(lastSeenAt);
+    return !isNaN(d.getTime()) && Date.now() - d.getTime() < 3 * 60 * 1000;
+  }
+
   return (
     <div className="flex h-full">
       {/* Session sidebar */}
@@ -162,6 +167,12 @@ export function ConversationsClient({ sessions: initialSessions, selectedId }: C
                           <span className="flex items-center gap-0.5 text-xs text-destructive">
                             <AlertCircle className="h-2.5 w-2.5" />
                             {session.error_count}
+                          </span>
+                        )}
+                        {isLive(session.last_seen_at) && (
+                          <span className="flex items-center gap-1 text-xs font-medium text-emerald-400">
+                            <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                            Live
                           </span>
                         )}
                         <span className="text-xs text-muted-foreground ml-auto">

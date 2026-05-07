@@ -9,8 +9,12 @@ export async function GET(
   const { name } = await params;
   const { searchParams } = new URL(request.url);
   const limit = Math.min(100, parseInt(searchParams.get('limit') || '50'));
+  const errorsOnly = searchParams.get('errors_only') === 'true';
 
   try {
+    const conditions = ["e.event_type = 'PostToolUse'", 'e.tool_name = ?'];
+    if (errorsOnly) conditions.push('e.is_error = TRUE');
+
     const [calls] = await pool.query<RowDataPacket[]>(
       `SELECT
         e.id, e.session_id, e.timestamp, e.tool_name,
@@ -18,7 +22,7 @@ export async function GET(
         SUBSTRING_INDEX(s.project_dir, '/', -1) AS project_name
       FROM cc_events e
       JOIN cc_sessions s ON e.session_id = s.session_id
-      WHERE e.event_type = 'PostToolUse' AND e.tool_name = ?
+      WHERE ${conditions.join(' AND ')}
       ORDER BY e.timestamp DESC
       LIMIT ?`,
       [name, limit]

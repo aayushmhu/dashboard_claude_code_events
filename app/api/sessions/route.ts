@@ -6,9 +6,12 @@ export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const project = searchParams.get('project') || '';
   const page = Math.max(1, parseInt(searchParams.get('page') || '1'));
-  const limit = Math.min(100, parseInt(searchParams.get('limit') || '20'));
+  const limitParam = searchParams.get('limit') || '20';
+  const limit = limitParam === 'all' ? 10000 : Math.min(10000, parseInt(limitParam));
   const hasErrors = searchParams.get('has_errors') === 'true';
-  const offset = (page - 1) * limit;
+  const start = searchParams.get('start') || '';
+  const end = searchParams.get('end') || '';
+  const offset = (page - 1) * (limitParam === 'all' ? 0 : limit);
 
   try {
     const conditions: string[] = [];
@@ -17,6 +20,14 @@ export async function GET(request: NextRequest) {
     if (project) {
       conditions.push('s.project_dir LIKE ?');
       params.push(`%${project}%`);
+    }
+    if (start) {
+      conditions.push('s.started_at >= ?');
+      params.push(start);
+    }
+    if (end) {
+      conditions.push('s.started_at < DATE_ADD(?, INTERVAL 1 DAY)');
+      params.push(end);
     }
 
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';

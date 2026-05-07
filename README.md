@@ -224,7 +224,10 @@ Save the appropriate script as `~/.claude/log-to-db.py` and replace `YOUR_PASSWO
 
 ```python
 #!/usr/bin/env python3
-"""Claude Code -> MySQL logger with debug + retry on transcript read."""
+"""Claude Code -> MySQL logger.
+Captures prompts, responses, tool calls, errors, and TOKEN USAGE.
+Token data is summed from the transcript file on Stop/SubagentStop events.
+Uses last_assistant_message from the hook payload instead of transcript parsing."""
 import sys, os, json, time, traceback, datetime
 
 DB_CONFIG = {
@@ -238,12 +241,14 @@ DB_CONFIG = {
 DEBUG_LOG = os.path.expanduser("~/.claude/logger-debug.log")
 ERR_LOG   = os.path.expanduser("~/.claude/logger-errors.log")
 
+
 def dbg(msg):
     try:
         with open(DEBUG_LOG, "a") as f:
             f.write(f"[{datetime.datetime.utcnow().isoformat()}] {msg}\n")
     except Exception:
         pass
+
 
 def log_error(msg):
     try:
@@ -252,7 +257,8 @@ def log_error(msg):
     except Exception:
         pass
 
-dbg(f"=== script started, pid={os.getpid()}, python={sys.executable} ===")
+
+dbg(f"=== script started, pid={os.getpid()} ===")
 
 try:
     import mysql.connector
@@ -262,78 +268,94 @@ except Exception as e:
     log_error(f"import failed: {e}\n{traceback.format_exc()}")
     sys.exit(0)
 
-def _extract_text_from_content(content):
-    if content is None:
-        return None
-    if isinstance(content, str):
-        return content.strip() or None
-    if isinstance(content, list):
-        parts = []
-        for c in content:
-            if not isinstance(c, dict):
-                continue
-            ctype = c.get("type")
-            if ctype == "text" and c.get("text"):
-                parts.append(c["text"])
-            elif ctype in ("thinking", "tool_use", "tool_result"):
-                continue
-            elif "text" in c and isinstance(c["text"], str):
-                parts.append(c["text"])
-        joined = "\n".join(p for p in parts if p).strip()
-        return joined or None
-    if isinstance(content, dict):
-        return _extract_text_from_content([content])
-    return None
 
-def _is_real_user_turn(rec):
-    if not isinstance(rec, dict):
-        return False
-    if rec.get("type") != "user":
-        return False
-    if rec.get("isSidechain") or rec.get("isMeta"):
-        return False
-    msg = rec.get("message") if isinstance(rec.get("message"), dict) else rec
-    content = msg.get("content") if isinstance(msg, dict) else None
-    if isinstance(content, list):
-        non_tool = [c for c in content
-                    if isinstance(c, dict)
-                    and c.get("type") not in ("tool_result",)]
-        if not non_tool:
-            return False
-    return True
-
-def read_last_assistant_turn(transcript_path):
-    """Retries up to 5 times because the Stop hook fires before the transcript is flushed."""
+# ---------------------------------------------------------------------------
+# Token counting from transcript
+# ---------------------------------------------------------------------------
+def sum_tokens_from_transcript(transcript_path, since_user_idx=None):
+    """Read the transcript JSONL and sum token usage from all assistant
+    message.usage blocks after the last real user prompt."""
+    result = {
+        "model": None,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cache_creation_tokens": 0,
+        "cache_read_tokens": 0,
+    }
     if not transcript_path or not os.path.exists(transcript_path):
-        return None
-    for attempt in range(5):
-        try:
-            with open(transcript_path, "r") as f:
-                records = [json.loads(l) for l in f if l.strip()]
-            last_user_idx = next(
-                (i for i in range(len(records) - 1, -1, -1) if _is_real_user_turn(records[i])),
-                None
-            )
-            if last_user_idx is None:
-                if attempt < 4: time.sleep(0.3)
-                continue
-            collected = []
-            for r in records[last_user_idx + 1:]:
-                if not isinstance(r, dict): continue
-                if r.get("type") == "user" and _is_real_user_turn(r): break
-                if r.get("type") != "assistant": continue
-                msg = r.get("message") if isinstance(r.get("message"), dict) else r
-                text = _extract_text_from_content(msg.get("content"))
-                if text: collected.append(text)
-            if collected:
-                result = "\n\n".join(collected).strip()
-                if result:
-                    return result
-            if attempt < 4: time.sleep(0.3)
-        except Exception:
-            if attempt < 4: time.sleep(0.3)
-    return None
+        return result
 
+    try:
+        with open(transcript_path, "r") as f:
+            records = []
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    records.append(json.loads(line))
+                except Exception:
+                    continue
+
+        # Find the last real user prompt index if not provided
+        if since_user_idx is None:
+            for i in range(len(records) - 1, -1, -1):
+                r = records[i]
+                if isinstance(r, dict) and r.get("type") == "user":
+                    msg = r.get("message") or {}
+                    content = msg.get("content") if isinstance(msg, dict) else None
+                    if isinstance(content, list):
+                        has_text = any(c.get("type") == "text" for c in content if isinstance(c, dict))
+                        if has_text:
+                            since_user_idx = i
+                            break
+                    elif isinstance(content, str):
+                        since_user_idx = i
+                        break
+
+        if since_user_idx is None:
+            since_user_idx = 0
+
+        # Sum usage from all assistant records after the user prompt
+        seen_ids = set()
+        for j in range(since_user_idx, len(records)):
+            r = records[j]
+            if not isinstance(r, dict) or r.get("type") != "assistant":
+                continue
+            msg = r.get("message") or {}
+            if not isinstance(msg, dict):
+                continue
+
+            mid = r.get("messageId") or r.get("uuid")
+            if mid:
+                if mid in seen_ids:
+                    continue
+                seen_ids.add(mid)
+
+            usage = msg.get("usage")
+            if isinstance(usage, dict):
+                result["input_tokens"] += usage.get("input_tokens", 0) or 0
+                result["output_tokens"] += usage.get("output_tokens", 0) or 0
+                result["cache_creation_tokens"] += usage.get("cache_creation_input_tokens", 0) or 0
+                result["cache_read_tokens"] += usage.get("cache_read_input_tokens", 0) or 0
+
+            model = msg.get("model")
+            if model:
+                result["model"] = model
+
+        dbg(f"tokens summed: in={result['input_tokens']} out={result['output_tokens']} "
+            f"cache_create={result['cache_creation_tokens']} cache_read={result['cache_read_tokens']} "
+            f"model={result['model']}")
+
+    except Exception as e:
+        dbg(f"token counting failed: {e}")
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Event extraction
+# ---------------------------------------------------------------------------
 def extract(data):
     event = data.get("hook_event_name", "Unknown")
     transcript = data.get("transcript_path")
@@ -343,19 +365,56 @@ def extract(data):
         "tool_name": None, "tool_input": None, "tool_output": None,
         "is_error": False, "error_message": None,
         "raw_payload": data, "transcript_path": transcript,
+        "model": None,
+        "input_tokens": 0, "output_tokens": 0,
+        "cache_creation_tokens": 0, "cache_read_tokens": 0,
+        "total_tokens": 0,
+        "duration_ms": None,
     }
+
     if event == "UserPromptSubmit":
-        row["role"] = "user"; row["content"] = data.get("prompt", "")
+        row["role"] = "user"
+        row["content"] = data.get("prompt", "")
+
     elif event == "Stop":
-        row["role"] = "assistant"; row["content"] = read_last_assistant_turn(transcript)
+        row["role"] = "assistant"
+        row["content"] = data.get("last_assistant_message")
+        time.sleep(0.3)
+        tokens = sum_tokens_from_transcript(transcript)
+        row["model"] = tokens["model"]
+        row["input_tokens"] = tokens["input_tokens"]
+        row["output_tokens"] = tokens["output_tokens"]
+        row["cache_creation_tokens"] = tokens["cache_creation_tokens"]
+        row["cache_read_tokens"] = tokens["cache_read_tokens"]
+        row["total_tokens"] = (tokens["input_tokens"] + tokens["output_tokens"] +
+                               tokens["cache_creation_tokens"] + tokens["cache_read_tokens"])
+
     elif event == "SubagentStop":
         row["role"] = "assistant"
-        row["agent"] = data.get("agent_name") or data.get("subagent_type") or "subagent"
-        row["content"] = read_last_assistant_turn(transcript)
+        row["agent"] = data.get("agent_type") or data.get("agent_name") or "subagent"
+        row["content"] = data.get("last_assistant_message")
+        time.sleep(0.3)
+        tokens = sum_tokens_from_transcript(
+            data.get("agent_transcript_path") or transcript
+        )
+        row["model"] = tokens["model"]
+        row["input_tokens"] = tokens["input_tokens"]
+        row["output_tokens"] = tokens["output_tokens"]
+        row["cache_creation_tokens"] = tokens["cache_creation_tokens"]
+        row["cache_read_tokens"] = tokens["cache_read_tokens"]
+        row["total_tokens"] = (tokens["input_tokens"] + tokens["output_tokens"] +
+                               tokens["cache_creation_tokens"] + tokens["cache_read_tokens"])
+
     elif event == "PreToolUse":
-        row["role"] = "tool"; row["tool_name"] = data.get("tool_name"); row["tool_input"] = data.get("tool_input")
+        row["role"] = "tool"
+        row["tool_name"] = data.get("tool_name")
+        row["tool_input"] = data.get("tool_input")
+
     elif event == "PostToolUse":
-        row["role"] = "tool"; row["tool_name"] = data.get("tool_name"); row["tool_input"] = data.get("tool_input")
+        row["role"] = "tool"
+        row["tool_name"] = data.get("tool_name")
+        row["tool_input"] = data.get("tool_input")
+        row["duration_ms"] = data.get("duration_ms")
         tr = data.get("tool_response") or {}
         row["tool_output"] = tr if isinstance(tr, (dict, list)) else {"raw": str(tr)}
         err = None
@@ -364,60 +423,112 @@ def extract(data):
                 err = tr.get("error") or tr.get("message") or "tool reported error"
             elif isinstance(tr.get("stderr"), str) and tr["stderr"].strip():
                 err = tr["stderr"][:2000]
-        if err: row["is_error"] = True; row["error_message"] = str(err)
+        if err:
+            row["is_error"] = True
+            row["error_message"] = str(err)
+
     elif event == "Notification":
-        row["role"] = "system"; row["content"] = data.get("message", "")
+        row["role"] = "system"
+        row["content"] = data.get("message", "")
+
+    elif event == "SessionStart":
+        row["model"] = data.get("model")
+
     else:
         row["content"] = data.get("message") or data.get("prompt")
+
     return row
+
 
 def jdump(v):
     return json.dumps(v) if v is not None else None
 
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
 def main():
     try:
         raw = sys.stdin.read()
+        dbg(f"stdin: {len(raw)} bytes")
     except Exception as e:
-        log_error(f"stdin read failed: {e}\n{traceback.format_exc()}"); sys.exit(0)
-    if not raw.strip():
+        log_error(f"stdin read failed: {e}\n{traceback.format_exc()}")
         sys.exit(0)
+
+    if not raw.strip():
+        dbg("stdin empty — exiting")
+        sys.exit(0)
+
     try:
         data = json.loads(raw)
+        dbg(f"event={data.get('hook_event_name')}")
     except Exception as e:
-        log_error(f"json parse failed: {e}"); sys.exit(0)
+        log_error(f"json parse failed: {e}")
+        sys.exit(0)
+
     try:
         row = extract(data)
+        dbg(f"row: type={row['event_type']} role={row['role']} "
+            f"content_len={len(row['content']) if row['content'] else 0} "
+            f"tokens={row['total_tokens']} model={row['model']}")
     except Exception as e:
-        log_error(f"extract failed: {e}\n{traceback.format_exc()}"); sys.exit(0)
+        log_error(f"extract failed: {e}\n{traceback.format_exc()}")
+        sys.exit(0)
+
     try:
         conn = mysql.connector.connect(**DB_CONFIG)
         cur = conn.cursor()
-        cur.execute("""
-            INSERT INTO cc_sessions (session_id, cwd, project_dir, last_seen_at)
-            VALUES (%s, %s, %s, CURRENT_TIMESTAMP)
-            ON DUPLICATE KEY UPDATE last_seen_at = CURRENT_TIMESTAMP
-        """, (row["session_id"], data.get("cwd"), data.get("project_dir") or data.get("cwd")))
+
+        if row["event_type"] == "SessionStart" and row["model"]:
+            cur.execute("""
+                INSERT INTO cc_sessions (session_id, cwd, project_dir, model, last_seen_at)
+                VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP)
+                ON DUPLICATE KEY UPDATE last_seen_at = CURRENT_TIMESTAMP, model = %s
+            """, (row["session_id"], data.get("cwd"),
+                  data.get("project_dir") or data.get("cwd"),
+                  row["model"], row["model"]))
+        else:
+            cur.execute("""
+                INSERT INTO cc_sessions (session_id, cwd, project_dir, last_seen_at)
+                VALUES (%s, %s, %s, CURRENT_TIMESTAMP)
+                ON DUPLICATE KEY UPDATE last_seen_at = CURRENT_TIMESTAMP
+            """, (row["session_id"], data.get("cwd"),
+                  data.get("project_dir") or data.get("cwd")))
+
         cur.execute("""
             INSERT INTO cc_events (
-                session_id, event_type, agent, role, content,
-                tool_name, tool_input, tool_output,
-                is_error, error_message, raw_payload, transcript_path
-            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+              session_id, event_type, agent, role, content,
+              tool_name, tool_input, tool_output,
+              is_error, error_message, raw_payload, transcript_path,
+              model, input_tokens, output_tokens,
+              cache_creation_tokens, cache_read_tokens, total_tokens,
+              duration_ms
+            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
         """, (row["session_id"], row["event_type"], row["agent"], row["role"],
               row["content"], row["tool_name"],
               jdump(row["tool_input"]), jdump(row["tool_output"]),
               row["is_error"], row["error_message"],
-              jdump(row["raw_payload"]), row["transcript_path"]))
-        conn.commit(); cur.close(); conn.close()
+              jdump(row["raw_payload"]), row["transcript_path"],
+              row["model"], row["input_tokens"], row["output_tokens"],
+              row["cache_creation_tokens"], row["cache_read_tokens"],
+              row["total_tokens"], row["duration_ms"]))
+
+        conn.commit()
+        cur.close()
+        conn.close()
         dbg(f"INSERT OK for {row['event_type']}")
     except Exception as e:
-        log_error(f"db op failed: {e}\n{traceback.format_exc()}"); sys.exit(0)
+        dbg(f"INSERT FAILED: {e}")
+        log_error(f"db op failed: {e}\n{traceback.format_exc()}")
+        sys.exit(0)
+
 
 if __name__ == "__main__":
     try:
         main()
     except Exception as e:
-        log_error(f"unhandled: {e}\n{traceback.format_exc()}"); sys.exit(0)
+        log_error(f"unhandled: {e}\n{traceback.format_exc()}")
+        sys.exit(0)
 ```
 
 > For the **PostgreSQL** version of the script, replace `mysql.connector` with `psycopg2` and adjust the DB_CONFIG keys (`dbname` instead of `database`, `port: 5432`). See `docs/claude-code-db-logging-setup.pdf` for the full PostgreSQL variant.

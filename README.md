@@ -489,7 +489,31 @@ You should see `SessionStart → UserPromptSubmit → Stop` with Claude's reply 
 ### Prerequisites
 
 - Node.js 18+
-- The `claude_logs` database set up and populated (Part 1)
+- MySQL 8+ running locally (or accessible remotely)
+
+### Database migrations
+
+The `migrations/` folder contains numbered SQL files that create everything from scratch. Run them in order once:
+
+```bash
+# Option 1 — runner script (runs all migrations automatically)
+bash migrations/run_migrations.sh -u root -p
+
+# Option 2 — run individually
+mysql -u root -p < migrations/001_create_database.sql   # create DB + user
+mysql -u claude -p claude_logs < migrations/002_create_sessions.sql
+mysql -u claude -p claude_logs < migrations/003_create_events.sql
+
+# Optional: load fake data to verify the UI before real hooks fire
+mysql -u claude -p claude_logs < migrations/004_seed_example.sql
+```
+
+| File | What it does |
+|---|---|
+| `001_create_database.sql` | Creates `claude_logs` DB and `claude` user |
+| `002_create_sessions.sql` | Creates `cc_sessions` table with indexes |
+| `003_create_events.sql` | Creates `cc_events` table with all columns and indexes |
+| `004_seed_example.sql` | Optional fake sessions/events for UI testing |
 
 ### Setup
 

@@ -1,4 +1,7 @@
+import type { Metadata } from 'next';
 import { Header } from '@/components/header';
+
+export const metadata: Metadata = { title: 'Projects' };
 import { ProjectCard } from '@/components/project-card';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ProjectStats, ToolStats } from '@/lib/types';

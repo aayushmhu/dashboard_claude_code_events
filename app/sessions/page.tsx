@@ -1,4 +1,7 @@
+import type { Metadata } from 'next';
 import { Header } from '@/components/header';
+
+export const metadata: Metadata = { title: 'Sessions' };
 import { SessionTable } from '@/components/session-table';
 import { Card, CardContent } from '@/components/ui/card';
 import { Session, ProjectStats } from '@/lib/types';

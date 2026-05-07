@@ -1,4 +1,7 @@
+import type { Metadata } from 'next';
 import { Header } from '@/components/header';
+
+export const metadata: Metadata = { title: 'Dashboard' };
 import { StatCard } from '@/components/stat-card';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ActivityTimeline } from '@/components/charts/activity-timeline';

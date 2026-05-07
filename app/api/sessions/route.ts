@@ -51,7 +51,7 @@ export async function GET(request: NextRequest) {
       ${whereClause}
       GROUP BY s.session_id
       ${havingClause}
-      ORDER BY s.started_at DESC
+      ORDER BY s.last_seen_at DESC
       LIMIT ? OFFSET ?`,
       [...params, limit, offset]
     );

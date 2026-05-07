@@ -8,7 +8,10 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 const inter = Inter({ subsets: ['latin'], variable: '--font-inter' });
 
 export const metadata: Metadata = {
-  title: 'Claude Code Dashboard',
+  title: {
+    template: '%s | Claude Code',
+    default: 'Claude Code Dashboard',
+  },
   description: 'Visualize your Claude Code activity',
 };
 

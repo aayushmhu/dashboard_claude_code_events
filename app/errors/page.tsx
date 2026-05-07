@@ -1,4 +1,7 @@
+import type { Metadata } from 'next';
 import { Header } from '@/components/header';
+
+export const metadata: Metadata = { title: 'Errors' };
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ErrorTimeline } from '@/components/charts/error-timeline';
 import { CheckCircle2, AlertCircle } from 'lucide-react';

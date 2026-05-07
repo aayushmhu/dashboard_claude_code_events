@@ -6,13 +6,13 @@ import {
   LayoutDashboard,
   FolderOpen,
   List,
-  MessageSquare,
   Wrench,
   AlertCircle,
   ChevronLeft,
   ChevronRight,
   Coins,
   Zap,
+  Terminal,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useState } from 'react';
@@ -26,6 +26,15 @@ const navItems = [
     bg: 'bg-blue-500/10',
     gradient: 'from-blue-500/20 to-blue-500/0',
     border: 'border-blue-500/50',
+  },
+  {
+    href: '/chat',
+    label: 'Chat',
+    icon: Terminal,
+    color: 'text-cyan-400',
+    bg: 'bg-cyan-500/10',
+    gradient: 'from-cyan-500/20 to-cyan-500/0',
+    border: 'border-cyan-500/50',
   },
   {
     href: '/projects',
@@ -44,15 +53,6 @@ const navItems = [
     bg: 'bg-violet-500/10',
     gradient: 'from-violet-500/20 to-violet-500/0',
     border: 'border-violet-500/50',
-  },
-  {
-    href: '/conversations',
-    label: 'Conversations',
-    icon: MessageSquare,
-    color: 'text-indigo-400',
-    bg: 'bg-indigo-500/10',
-    gradient: 'from-indigo-500/20 to-indigo-500/0',
-    border: 'border-indigo-500/50',
   },
   {
     href: '/tools',

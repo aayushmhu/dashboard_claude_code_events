@@ -10,6 +10,30 @@ The hook setup is **global** — configure it once and every project is logged a
 
 ---
 
+## Pages
+
+| Route | What it shows |
+|---|---|
+| `/` | Dashboard — stat cards, token summary, activity timeline, tool usage chart, recent sessions |
+| `/projects` | Card grid per project directory |
+| `/sessions` | Paginated session table with project/date/error filters |
+| `/conversations` | Chat replay — session sidebar + scrollable event thread, auto-refreshes every 15s |
+| `/chat` | Interactive AI chat with VS Code-style file explorer, Monaco editor, and file preview |
+| `/tools` | Tool analytics — usage chart, per-tool avg/max duration table |
+| `/tokens` | Token usage — totals, cost estimation, timeline chart, model breakdown, cost by project |
+| `/errors` | Error log |
+
+### `/chat` features
+
+- **VS Code-style file explorer** — browse your project directory, lazy-load folders on expand
+- **Monaco Editor** — full syntax highlighting and editing; save with Ctrl+S / Cmd+S
+- **File preview** — Markdown (GitHub-flavored), PDF, and image preview
+- **Resizable split pane** — drag to adjust file panel vs chat panel width
+- **Right-click context menu** — create file, create folder, rename
+- **Rich tool call cards** — each tool type (Bash, Write, Edit, Read, Glob, Grep, Agent, etc.) rendered with purpose-built UI; diffs, terminal blocks, file lists, checklists
+
+---
+
 ## Part 1 — Set up the database & hooks
 
 Do this once per machine.
@@ -43,7 +67,6 @@ EXIT;
 #### 3. Run migrations
 
 ```bash
-# Clone the repo first (or skip to Step 4 if you already have it)
 git clone https://github.com/aayushmhu/dashboard_claude_code_events.git
 cd dashboard_claude_code_events
 
@@ -196,10 +219,8 @@ mysql -u claude -p claude_logs -e "
 ### Setup
 
 ```bash
-# Install dependencies
 npm install
 
-# Configure database connection
 cp .env.local.example .env.local
 # Edit .env.local with your credentials
 ```

@@ -21,14 +21,18 @@ export const ROLE_COLORS: Record<string, string> = {
 
 // Tool-specific colors — used in tool usage bar charts, tool analytics, badges
 export const TOOL_COLORS: Record<string, string> = {
-  Write:  '#06B6D4',
-  Bash:   '#F97316',
-  Read:   '#A78BFA',
-  Agent:  '#34D399',
-  Skill:  '#FB7185',
-  Glob:   '#FBBF24',
-  Edit:   '#F472B6',
-  Grep:   '#818CF8',
+  Write:      '#06B6D4',
+  Bash:       '#F97316',
+  Read:       '#A78BFA',
+  Agent:      '#34D399',
+  Skill:      '#FB7185',
+  Glob:       '#FBBF24',
+  Edit:       '#F472B6',
+  Grep:       '#818CF8',
+  TaskCreate: '#8B5CF6',
+  TaskUpdate: '#8B5CF6',
+  TodoWrite:  '#14B8A6',
+  ToolSearch: '#64748B',
 };
 
 // Token breakdown colors — used in token usage charts, cost estimation

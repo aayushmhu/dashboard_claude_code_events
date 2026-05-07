@@ -1,3 +1,4 @@
+import type { Metadata } from 'next';
 import { Header } from '@/components/header';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ConversationThread } from '@/components/conversation-thread';
@@ -6,6 +7,15 @@ import { formatDuration, formatTokens, formatRelativeTime } from '@/lib/utils';
 import { Clock, Zap, AlertCircle, ArrowLeft, Coins } from 'lucide-react';
 import Link from 'next/link';
 import { Event, Session } from '@/lib/types';
+
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}): Promise<Metadata> {
+  const { id } = await params;
+  return { title: `Session ${id.slice(0, 8)}` };
+}
 
 async function getData(id: string) {
   const base = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';

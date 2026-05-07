@@ -1,3 +1,4 @@
+import type { Metadata } from 'next';
 import { Header } from '@/components/header';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -5,6 +6,15 @@ import { formatRelativeTime, formatAbsoluteTime, truncateId } from '@/lib/utils'
 import Link from 'next/link';
 import { AlertCircle, ArrowLeft } from 'lucide-react';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
+
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ name: string }>;
+}): Promise<Metadata> {
+  const { name } = await params;
+  return { title: `${name} Tool` };
+}
 
 async function getData(name: string, errorsOnly: boolean) {
   const base = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';

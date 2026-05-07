@@ -104,6 +104,55 @@ export function truncateText(text: string, maxLength = 120): string {
   return text.slice(0, maxLength) + '…';
 }
 
+export function getFileName(filePath: string): string {
+  return filePath.split('/').pop() || filePath;
+}
+
+export function getRelativePath(filePath: string, basePath?: string): string {
+  if (basePath && filePath.startsWith(basePath)) {
+    return filePath.slice(basePath.length).replace(/^\//, '');
+  }
+  const match = filePath.match(/(?:projects|src|Users\/[^/]+)\/(.+)/);
+  return match ? match[1] : filePath;
+}
+
+export function getFileExtension(filePath: string): string {
+  const parts = filePath.split('.');
+  return parts.length > 1 ? parts.pop()! : '';
+}
+
+export function getLanguageLabel(filePath: string): string {
+  const ext = getFileExtension(filePath).toLowerCase();
+  const map: Record<string, string> = {
+    ts: 'TypeScript', tsx: 'TypeScript', js: 'JavaScript', jsx: 'JavaScript',
+    py: 'Python', html: 'HTML', css: 'CSS', json: 'JSON', md: 'Markdown',
+    sql: 'SQL', sh: 'Shell', bash: 'Shell', yml: 'YAML', yaml: 'YAML',
+    rs: 'Rust', go: 'Go', rb: 'Ruby', java: 'Java', c: 'C', cpp: 'C++',
+    h: 'C', hpp: 'C++', swift: 'Swift', kt: 'Kotlin', toml: 'TOML',
+  };
+  return map[ext] || ext.toUpperCase() || 'Text';
+}
+
+export function countLines(text: string): number {
+  if (!text) return 0;
+  return text.split('\n').length;
+}
+
+export function truncateLines(
+  text: string,
+  maxLines: number,
+): { text: string; truncated: boolean; totalLines: number } {
+  const lines = text.split('\n');
+  if (lines.length <= maxLines) return { text, truncated: false, totalLines: lines.length };
+  return { text: lines.slice(0, maxLines).join('\n'), truncated: true, totalLines: lines.length };
+}
+
+export function formatDurationMs(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
+  return `${Math.floor(ms / 60000)}m ${Math.round((ms % 60000) / 1000)}s`;
+}
+
 export const CHART_COLORS = {
   blue: 'hsl(217, 91%, 60%)',
   indigo: 'hsl(239, 84%, 67%)',
@@ -176,12 +225,16 @@ export const AXIS_TICK = { fontSize: 10, fill: 'hsl(var(--muted-foreground))' };
 export const GRID_STROKE = 'hsl(var(--border))';
 
 export const TOOL_COLORS: Record<string, string> = {
-  Write: '#06B6D4',
-  Bash:  '#F97316',
-  Read:  '#A78BFA',
-  Agent: '#34D399',
-  Skill: '#FB7185',
-  Glob:  '#FBBF24',
-  Edit:  '#F472B6',
-  Grep:  '#818CF8',
+  Write:      '#06B6D4',
+  Bash:       '#F97316',
+  Read:       '#A78BFA',
+  Agent:      '#34D399',
+  Skill:      '#FB7185',
+  Glob:       '#FBBF24',
+  Edit:       '#F472B6',
+  Grep:       '#818CF8',
+  TaskCreate: '#8B5CF6',
+  TaskUpdate: '#8B5CF6',
+  TodoWrite:  '#14B8A6',
+  ToolSearch: '#64748B',
 };

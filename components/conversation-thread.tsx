@@ -123,13 +123,13 @@ export function ConversationThread({ events }: ConversationThreadProps) {
             <Timestamp ts={event.timestamp} />
           </div>
           <div
-            className="max-w-[82%] rounded-2xl rounded-tl-md px-4 py-3 text-sm"
+            className="max-w-[82%] min-w-0 overflow-hidden rounded-2xl rounded-tl-md px-4 py-3 text-sm"
             style={{
               background: bubble.bg,
               border: `1px solid ${bubble.border}`,
             }}
           >
-            <div className="prose prose-sm dark:prose-invert max-w-none prose-p:leading-relaxed prose-p:my-1 prose-pre:my-2 prose-headings:my-2">
+            <div className="prose prose-sm dark:prose-invert max-w-none prose-p:leading-relaxed prose-p:my-1 prose-pre:my-2 prose-headings:my-2 prose-pre:overflow-x-auto prose-code:break-words">
               <ReactMarkdown>{event.content || ''}</ReactMarkdown>
             </div>
           </div>

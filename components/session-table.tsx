@@ -1,6 +1,6 @@
 'use client';
 
-import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { Badge } from '@/components/ui/badge';
 import { Session } from '@/lib/types';
 import { formatRelativeTime, formatAbsoluteTime, formatDuration, truncateId } from '@/lib/utils';
@@ -30,6 +30,8 @@ function CopyButton({ text }: { text: string }) {
 }
 
 export function SessionTable({ sessions }: SessionTableProps) {
+  const router = useRouter();
+
   if (sessions.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
@@ -54,14 +56,11 @@ export function SessionTable({ sessions }: SessionTableProps) {
         </thead>
         <tbody>
           {sessions.map((session) => (
-            <Link
+            <tr
               key={session.session_id}
-              href={`/conversations?session=${session.session_id}`}
-              legacyBehavior
+              onClick={() => router.push(`/conversations?session=${session.session_id}`)}
+              className="group border-b border-border/50 hover:bg-muted/30 transition-colors cursor-pointer"
             >
-              <tr
-                className="group border-b border-border/50 hover:bg-muted/30 transition-colors cursor-pointer"
-              >
                 <td className="py-3 pr-4">
                   <div className="flex items-center font-mono text-xs">
                     {truncateId(session.session_id, 12)}
@@ -109,8 +108,7 @@ export function SessionTable({ sessions }: SessionTableProps) {
                     <span className="text-muted-foreground text-xs">—</span>
                   )}
                 </td>
-              </tr>
-            </Link>
+            </tr>
           ))}
         </tbody>
       </table>

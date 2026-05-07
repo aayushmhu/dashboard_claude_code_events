@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-A Next.js 14+ (App Router) dashboard that visualizes Claude Code activity stored in a MySQL database. The full specification lives in `docs/claude-code-dashboard-prompt.md`.
+A Next.js 14+ (App Router) dashboard that visualizes Claude Code activity stored in a MySQL database.
 
 ## Commands
 

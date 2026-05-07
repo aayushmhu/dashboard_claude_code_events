@@ -4,54 +4,43 @@
 USE claude_logs;
 
 CREATE TABLE IF NOT EXISTS cc_events (
-  id                    BIGINT UNSIGNED  NOT NULL AUTO_INCREMENT,
+  id                    BIGINT           NOT NULL AUTO_INCREMENT,
   session_id            VARCHAR(255)     NOT NULL,
-  timestamp             DATETIME         NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  timestamp             TIMESTAMP(3)     NULL DEFAULT CURRENT_TIMESTAMP(3),
 
   -- Event classification
   event_type            VARCHAR(64)      NOT NULL,
-  agent                 VARCHAR(64)      NULL,
+  agent                 VARCHAR(128)     NULL,
   role                  VARCHAR(32)      NULL,
 
   -- Content
-  content               MEDIUMTEXT       NULL,
-  tool_name             VARCHAR(255)     NULL,
+  content               LONGTEXT         NULL,
+  tool_name             VARCHAR(128)     NULL,
   tool_input            JSON             NULL,
   tool_output           JSON             NULL,
 
   -- Error tracking
-  is_error              TINYINT(1)       NOT NULL DEFAULT 0,
+  is_error              TINYINT(1)       DEFAULT '0',
   error_message         TEXT             NULL,
 
   -- Raw hook payload
   raw_payload           JSON             NULL,
-  transcript_path       VARCHAR(1024)    NULL,
+  transcript_path       TEXT             NULL,
 
   -- Token usage (populated on Stop / SubagentStop events)
-  model                 VARCHAR(128)     NULL,
-  input_tokens          INT UNSIGNED     NULL,
-  output_tokens         INT UNSIGNED     NULL,
-  cache_creation_tokens INT UNSIGNED     NULL,
-  cache_read_tokens     INT UNSIGNED     NULL,
-  total_tokens          INT UNSIGNED     NULL,
+  model                 VARCHAR(64)      NULL,
+  input_tokens          INT              DEFAULT '0',
+  output_tokens         INT              DEFAULT '0',
+  cache_creation_tokens INT              DEFAULT '0',
+  cache_read_tokens     INT              DEFAULT '0',
+  total_tokens          INT              DEFAULT '0',
 
   -- Tool performance (populated on PostToolUse events)
-  duration_ms           INT UNSIGNED     NULL,
+  duration_ms           INT              NULL,
 
   PRIMARY KEY (id),
-
-  -- Foreign key to sessions
-  CONSTRAINT fk_events_session
-    FOREIGN KEY (session_id) REFERENCES cc_sessions (session_id)
-    ON DELETE CASCADE ON UPDATE CASCADE,
-
-  -- Query-optimised indexes
-  INDEX idx_session_id              (session_id),
-  INDEX idx_timestamp               (timestamp),
-  INDEX idx_event_type              (event_type),
-  INDEX idx_tool_name               (tool_name),
-  INDEX idx_is_error                (is_error),
-  INDEX idx_session_timestamp       (session_id, timestamp),
-  INDEX idx_event_type_tool         (event_type, tool_name),
-  INDEX idx_is_error_timestamp      (is_error, timestamp)
+  KEY idx_session (session_id),
+  KEY idx_time    (timestamp),
+  KEY idx_type    (event_type),
+  KEY idx_errors  (is_error)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

@@ -13,9 +13,10 @@ import {
   RefreshCw, AlertCircle, Clock, Coins, Settings,
   File, FileText, FileCode, X, Pencil, FilePlus, FolderPlus,
   Eye, ImageIcon, AtSign, Slash, Paperclip,
+  Crown, ShieldCheck, FlaskConical, Server, Layout, Cloud, Database,
 } from 'lucide-react';
-import { TOOL_COLORS, BUBBLE_COLORS, ROLE_COLORS } from '@/lib/colors';
-import { formatCost, formatRelativeTime, formatDuration, formatTokens, truncateId, parseDbDate } from '@/lib/utils';
+import { TOOL_COLORS, BUBBLE_COLORS, ROLE_COLORS, getAgentColor } from '@/lib/colors';
+import { formatCost, formatRelativeTime, formatDuration, formatTokens, truncateId, parseDbDate, formatAgentName, getAgentIconType } from '@/lib/utils';
 import { ToolCallCard } from '@/components/tool-call-card';
 import { Session, Event } from '@/lib/types';
 
@@ -33,6 +34,7 @@ interface ChatMessage {
   toolOutput?: string | Record<string, unknown> | null;
   toolIsError?: boolean;
   agentType?: string;
+  agentName?: string;
   permissionDenial?: { tool_name: string; tool_input: Record<string, unknown> };
   inputTokens?: number;
   outputTokens?: number;
@@ -97,6 +99,20 @@ function formatBytes(n: number): string {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function getAgentIconComponent(iconType: string): React.ElementType {
+  switch (iconType) {
+    case 'crown':        return Crown;
+    case 'shield-check': return ShieldCheck;
+    case 'flask-conical':return FlaskConical;
+    case 'server':       return Server;
+    case 'layout':       return Layout;
+    case 'cloud':        return Cloud;
+    case 'database':     return Database;
+    case 'file-text':    return FileText;
+    default:             return Bot;
+  }
+}
+
 const MONACO_LANG: Record<string, string> = {
   '.ts': 'typescript', '.tsx': 'typescript', '.js': 'javascript', '.jsx': 'javascript',
   '.py': 'python', '.rs': 'rust', '.go': 'go', '.java': 'java', '.kt': 'kotlin',
@@ -135,6 +151,7 @@ function eventsToMessages(events: Event[]): ChatMessage[] {
         agentType: ev.event_type === 'SubagentStop'
           ? ((ev.raw_payload as Record<string, unknown>)?.agent_type as string) || 'subagent'
           : undefined,
+        agentName: ev.event_type === 'SubagentStop' ? (ev.agent || 'subagent') : undefined,
         inputTokens: ev.input_tokens ?? undefined,
         outputTokens: ev.output_tokens ?? undefined,
         cacheCreationTokens: ev.cache_creation_tokens ?? undefined,
@@ -314,21 +331,42 @@ const MessageBubble = memo(function MessageBubble({ msg, onRetry }: { msg: ChatM
   }
 
   if (msg.role === 'assistant') {
-    const iconColor = msg.agentType ? ROLE_COLORS.subagent : ROLE_COLORS.assistant;
-    const bubble = msg.agentType ? BUBBLE_COLORS.subagent : BUBBLE_COLORS.assistant;
+    const isAgent = !!msg.agentName;
+    const agentColor = isAgent ? getAgentColor(msg.agentName!) : null;
+    const iconColor = agentColor ? agentColor.text : ROLE_COLORS.assistant;
+    const AgentIcon = isAgent ? getAgentIconComponent(getAgentIconType(msg.agentName!)) : Bot;
+    const displayName = isAgent ? formatAgentName(msg.agentName!) : 'Claude';
+
     return (
       <div className="flex flex-col items-start gap-1.5 my-4 px-4">
         <div className="flex items-center gap-2">
           <div className="flex items-center gap-1.5 text-xs font-medium" style={{ color: iconColor }}>
-            <div className="w-5 h-5 rounded-full flex items-center justify-center" style={{ background: `${iconColor}20` }}>
-              <Bot className="h-3 w-3" style={{ color: iconColor }} />
+            <div
+              className="w-5 h-5 rounded-full flex items-center justify-center"
+              style={{ background: agentColor ? agentColor.bg : `${iconColor}20` }}
+            >
+              <AgentIcon className="h-3 w-3" style={{ color: iconColor }} />
             </div>
-            <span>{msg.agentType || 'Claude'}</span>
+            <span>{displayName}</span>
+            {isAgent && (
+              <span
+                className="text-[10px] px-1.5 py-0 rounded"
+                style={{ background: agentColor!.bg, border: `1px solid ${agentColor!.border}`, color: agentColor!.text }}
+              >
+                agent
+              </span>
+            )}
           </div>
           <span className="text-[11px] text-muted-foreground/70">{formatRelativeTime(msg.timestamp.toISOString())}</span>
         </div>
-        <div className="max-w-[82%] min-w-0 overflow-hidden rounded-2xl rounded-tl-md px-4 py-3 text-sm"
-          style={{ background: bubble.bg, border: `1px solid ${bubble.border}` }}>
+        <div
+          className="max-w-[82%] min-w-0 overflow-hidden rounded-2xl rounded-tl-md px-4 py-3 text-sm"
+          style={{
+            background: agentColor ? agentColor.bg : BUBBLE_COLORS.assistant.bg,
+            border: `1px solid ${agentColor ? agentColor.border : BUBBLE_COLORS.assistant.border}`,
+            ...(isAgent ? { borderLeft: `3px solid ${agentColor!.text}` } : {}),
+          }}
+        >
           {msg.isStreaming && !msg.content
             ? <span className="text-muted-foreground animate-pulse text-xs">Thinking…</span>
             : <div className="prose prose-sm dark:prose-invert max-w-none prose-p:leading-relaxed prose-p:my-1 prose-pre:my-2 prose-headings:my-2 prose-pre:overflow-x-auto prose-code:break-words">
@@ -501,6 +539,7 @@ export function ChatClient({
   const [showCmdPalette, setShowCmdPalette] = useState(false);
   const [cmdQuery, setCmdQuery] = useState('');
   const [cmdSelectedIdx, setCmdSelectedIdx] = useState(0);
+  const [dynamicCmds, setDynamicCmds] = useState<SlashCommand[]>([]);
 
   // File mention picker (@ references)
   const [showFilePicker, setShowFilePicker] = useState(false);
@@ -993,16 +1032,25 @@ export function ChatClient({
             const event = JSON.parse(line) as Record<string, unknown>;
 
             if (event.type === 'system') {
-              const ev = event as { subtype?: string; session_id?: string };
-              if (ev.subtype === 'init' && ev.session_id) {
-                setCurrentSessionId(ev.session_id);
-                router.push(`/chat/${ev.session_id}`, { scroll: false });
-                // Migrate any images that were attached before we knew the session ID
-                const pending = pendingImagesRef.current;
-                Object.entries(pending).forEach(([idx, images]) => {
-                  saveSessionImages(ev.session_id!, Number(idx), images);
-                });
-                pendingImagesRef.current = {};
+              const ev = event as { subtype?: string; session_id?: string; slash_commands?: string[] };
+              if (ev.subtype === 'init') {
+                if (ev.session_id) {
+                  setCurrentSessionId(ev.session_id);
+                  router.push(`/chat/${ev.session_id}`, { scroll: false });
+                  const pending = pendingImagesRef.current;
+                  Object.entries(pending).forEach(([idx, images]) => {
+                    saveSessionImages(ev.session_id!, Number(idx), images);
+                  });
+                  pendingImagesRef.current = {};
+                }
+                if (ev.slash_commands?.length) {
+                  const knownNames = new Set(SLASH_COMMANDS.map(c => c.name));
+                  setDynamicCmds(
+                    ev.slash_commands
+                      .filter(name => !knownNames.has(name))
+                      .map(name => ({ name, desc: '', local: false }))
+                  );
+                }
               }
               continue;
             }
@@ -1119,7 +1167,8 @@ export function ChatClient({
     sendMessageCore(last.text, last.imgs, last.files, mode);
   }, [isStreaming]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const filteredCmds = SLASH_COMMANDS.filter(c => c.name.startsWith(cmdQuery));
+  const allCmds = [...SLASH_COMMANDS, ...dynamicCmds];
+  const filteredCmds = allCmds.filter(c => c.name.startsWith(cmdQuery));
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // Command palette navigation
@@ -1732,7 +1781,7 @@ export function ChatClient({
             </div>
           )}
 
-          <div className="relative p-4">
+          <div className="relative px-4 pt-3 pb-1">
             {/* Command palette */}
             {showCmdPalette && filteredCmds.length > 0 && (
               <div className="absolute bottom-full left-4 right-4 mb-2 bg-card border border-border rounded-xl shadow-2xl overflow-hidden z-50">
@@ -1744,7 +1793,7 @@ export function ChatClient({
                     className={`w-full flex items-center gap-3 px-3 py-2 text-left transition-colors ${i === cmdSelectedIdx ? 'bg-muted/60' : 'hover:bg-muted/40'}`}
                     onClick={() => executeSlashCommand(cmd.name)}
                   >
-                    <span className="text-xs font-mono font-semibold text-primary flex-shrink-0 w-20">/{cmd.name}</span>
+                    <span className="text-xs font-mono font-semibold text-primary flex-shrink-0 w-24">/{cmd.name}</span>
                     <span className="text-xs text-muted-foreground truncate">{cmd.desc}</span>
                     {cmd.local && <span className="ml-auto text-[9px] text-muted-foreground/50 flex-shrink-0">local</span>}
                   </button>
@@ -1781,40 +1830,65 @@ export function ChatClient({
               </div>
             )}
 
-            <div className="flex items-end gap-2">
-              {/* Attach image button */}
-              {effectiveDir && (
-                <button
-                  onClick={() => imageInputRef.current?.click()}
-                  disabled={isStreaming || attachedImages.length >= 4}
-                  title="Attach image (or paste/drag)"
-                  className="shrink-0 flex items-center justify-center w-9 h-9 rounded-xl border border-border hover:border-primary/40 hover:bg-primary/5 text-muted-foreground hover:text-foreground disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                >
-                  <Paperclip className="h-4 w-4" />
-                </button>
-              )}
+            <textarea ref={textareaRef} value={prompt} onChange={handleTextareaChange} onKeyDown={handleKeyDown}
+              onPaste={handlePaste}
+              onDrop={handleDrop}
+              onDragOver={e => e.preventDefault()}
+              disabled={isStreaming || !effectiveDir}
+              placeholder={effectiveDir
+                ? 'Message… (/ for commands, @ to reference a file, paste or drag images)'
+                : 'Select a directory first…'}
+              rows={1}
+              className="w-full resize-none rounded-xl px-4 py-3 text-sm bg-muted/40 border border-border focus:outline-none focus:border-primary/40 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              style={{ maxHeight: '200px', overflow: 'auto' }} />
+          </div>
 
-              <textarea ref={textareaRef} value={prompt} onChange={handleTextareaChange} onKeyDown={handleKeyDown}
-                onPaste={handlePaste}
-                onDrop={handleDrop}
-                onDragOver={e => e.preventDefault()}
-                disabled={isStreaming || !effectiveDir}
-                placeholder={effectiveDir
-                  ? 'Message… (/ for commands, @ to reference a file, paste or drag images)'
-                  : 'Select a directory first…'}
-                rows={1}
-                className="flex-1 resize-none rounded-xl px-4 py-3 text-sm bg-muted/40 border border-border focus:outline-none focus:border-primary/40 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                style={{ maxHeight: '200px', overflow: 'auto' }} />
+          {/* Bottom toolbar */}
+          <div className="flex items-center justify-between px-4 pb-3">
+            {/* Left: Attach + Commands */}
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => imageInputRef.current?.click()}
+                disabled={!effectiveDir || isStreaming || attachedImages.length >= 4}
+                title="Attach image (or paste/drag)"
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs text-muted-foreground hover:text-foreground hover:bg-muted/60 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              >
+                <Paperclip className="h-3.5 w-3.5" />
+                <span>Attach</span>
+              </button>
+              <button
+                onClick={() => {
+                  if (showCmdPalette) {
+                    setShowCmdPalette(false);
+                    if (prompt === '/') setPrompt('');
+                  } else {
+                    setPrompt('/');
+                    setShowCmdPalette(true);
+                    setCmdQuery('');
+                    setCmdSelectedIdx(0);
+                    setTimeout(() => textareaRef.current?.focus(), 0);
+                  }
+                }}
+                disabled={!effectiveDir || isStreaming}
+                title="Slash commands"
+                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs disabled:opacity-40 disabled:cursor-not-allowed transition-colors ${showCmdPalette ? 'text-primary bg-primary/10' : 'text-muted-foreground hover:text-foreground hover:bg-muted/60'}`}
+              >
+                <Slash className="h-3.5 w-3.5" />
+                <span>Commands</span>
+              </button>
+            </div>
 
+            {/* Right: Stop / Send */}
+            <div className="flex items-center gap-2">
               {isStreaming ? (
-                <button onClick={stopStreaming} className="shrink-0 flex items-center gap-1.5 px-4 py-3 rounded-xl text-sm font-medium bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 transition-colors">
-                  <Square className="h-4 w-4" />Stop
+                <button onClick={stopStreaming} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 transition-colors">
+                  <Square className="h-3.5 w-3.5" />Stop
                 </button>
               ) : (
                 <button onClick={() => sendMessage(prompt)}
                   disabled={(!prompt.trim() && attachedImages.length === 0) || !effectiveDir}
-                  className="shrink-0 flex items-center gap-1.5 px-4 py-3 rounded-xl text-sm font-medium bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
-                  <Send className="h-4 w-4" />Send
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+                  <Send className="h-3.5 w-3.5" />Send
                 </button>
               )}
             </div>

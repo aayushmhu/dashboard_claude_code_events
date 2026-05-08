@@ -1,14 +1,14 @@
 'use client';
 
 import { useState } from 'react';
-import ReactMarkdown from 'react-markdown';
 import {
   File, Eye, Terminal, FolderSearch, Search, Bot, Slash,
   PlusCircle, RefreshCw, ListChecks, Wrench, Pencil,
   ChevronDown, ChevronRight, Check, X,
+  Mail, HelpCircle, UsersRound,
 } from 'lucide-react';
-import { TOOL_COLORS } from '@/lib/colors';
-import { getFileName, getLanguageLabel, formatDurationMs } from '@/lib/utils';
+import { TOOL_COLORS, getAgentColor } from '@/lib/colors';
+import { getFileName, getLanguageLabel, formatDurationMs, formatAgentName } from '@/lib/utils';
 
 interface ToolCallCardProps {
   toolName: string;
@@ -555,55 +555,69 @@ function GrepTool({ input, output, isError, errorMessage }: ToolProps) {
 // ─── Agent ────────────────────────────────────────────────────────────────────
 
 function AgentTool({ input, output, isError, errorMessage }: ToolProps) {
-  const [open, setOpen] = useState(false);
-  const color = TOOL_COLORS.Agent;
-  const agentType = (output?.agentType as string) || (input?.subagent_type as string) || 'Agent';
-  const desc = (input?.description as string) || '';
-  const rawContent = output?.content;
-  const content = typeof rawContent === 'string' ? rawContent
-    : rawContent ? JSON.stringify(rawContent, null, 2) : '';
+  const [promptOpen, setPromptOpen] = useState(false);
+
+  const name = (output?.name as string) || (input?.name as string) || 'Agent';
+  const colorHint = output?.color as string | undefined;
+  const agentColor = getAgentColor(name, colorHint);
+  const displayName = formatAgentName(name);
+  const model = (output?.model as string) || (input?.model as string);
+  const status = (output?.status as string) || (isError ? 'error' : output ? 'completed' : undefined);
+  const prompt = (input?.prompt as string) || '';
+  const promptLines = prompt.split('\n');
+  const promptPreview = promptLines.slice(0, 3).join('\n');
+  const hasMorePrompt = promptLines.length > 3;
   const tokens = output?.totalTokens as number | undefined;
   const durationMs = output?.totalDurationMs as number | undefined;
   const toolCount = output?.totalToolUseCount as number | undefined;
 
+  const statusBadge = status === 'completed'
+    ? <Badge color="#10B981">Completed</Badge>
+    : status === 'error'
+    ? <Badge color="#EF4444">Error</Badge>
+    : null;
+
   return (
-    <ToolShell color={color} isError={isError} errorMessage={errorMessage}>
-      <CollapsibleHeader
+    <ToolShell color={agentColor.text} isError={isError} errorMessage={errorMessage}>
+      <StaticHeader
         icon={Bot}
-        color={color}
-        title={
-          <div className="min-w-0">
-            <span className="text-xs font-medium text-foreground">Agent: {agentType}</span>
-            {desc && <p className="text-[10px] text-muted-foreground truncate">{desc}</p>}
+        color={agentColor.text}
+        title={<span className="text-xs font-medium text-foreground">Delegated to {displayName}</span>}
+        extra={
+          <div className="flex items-center gap-1.5">
+            {model && <Badge color={agentColor.text}>{model}</Badge>}
+            {statusBadge}
           </div>
         }
-        open={open}
-        onToggle={() => setOpen(v => !v)}
       />
-      {open && (
-        <div className="px-3 pb-3">
-          {content ? (
-            <div
-              className="prose prose-invert prose-sm max-w-none text-xs rounded-md p-3"
-              style={{ background: 'rgba(0,0,0,0.15)' }}
+      {prompt && (
+        <div className="px-3 pb-2 border-t border-white/[0.06]">
+          <pre
+            className="text-[11px] font-mono whitespace-pre-wrap break-words text-muted-foreground/70 mt-2 overflow-hidden"
+            style={{ maxHeight: promptOpen ? undefined : '52px' }}
+          >
+            {promptOpen ? prompt : promptPreview}
+          </pre>
+          {hasMorePrompt && (
+            <button
+              onClick={() => setPromptOpen(v => !v)}
+              className="mt-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors"
             >
-              <ReactMarkdown>{content}</ReactMarkdown>
-            </div>
-          ) : (
-            <p className="text-xs text-muted-foreground italic">No content</p>
+              {promptOpen ? 'Collapse prompt' : 'Show full prompt…'}
+            </button>
           )}
-          {(tokens !== undefined || durationMs !== undefined || toolCount !== undefined) && (
-            <div className="flex items-center gap-3 mt-2 pt-2 border-t border-white/[0.06]">
-              {tokens !== undefined && (
-                <span className="text-[10px] text-muted-foreground">{tokens.toLocaleString()} tokens</span>
-              )}
-              {durationMs !== undefined && (
-                <span className="text-[10px] text-muted-foreground">{formatDurationMs(durationMs)}</span>
-              )}
-              {toolCount !== undefined && (
-                <span className="text-[10px] text-muted-foreground">{toolCount} tool calls</span>
-              )}
-            </div>
+        </div>
+      )}
+      {(tokens !== undefined || durationMs !== undefined || toolCount !== undefined) && (
+        <div className="flex items-center gap-3 px-3 py-2 border-t border-white/[0.06]">
+          {tokens !== undefined && (
+            <span className="text-[10px] text-muted-foreground">{tokens.toLocaleString()} tokens</span>
+          )}
+          {durationMs !== undefined && (
+            <span className="text-[10px] text-muted-foreground">{formatDurationMs(durationMs)}</span>
+          )}
+          {toolCount !== undefined && (
+            <span className="text-[10px] text-muted-foreground">{toolCount} tool calls</span>
           )}
         </div>
       )}
@@ -764,6 +778,175 @@ function ToolSearchTool({ input, output, isError, errorMessage }: ToolProps) {
   );
 }
 
+// ─── SendMessage ──────────────────────────────────────────────────────────────
+
+function SendMessageTool({ input, output, isError, errorMessage }: ToolProps) {
+  const [open, setOpen] = useState(false);
+  const color = TOOL_COLORS.SendMessage;
+  const to = (input?.to as string) || '';
+  const summary = (input?.summary as string) || (input?.message as string) || '';
+  const message = (input?.message as string) || '';
+  const routing = output?.routing as Record<string, unknown> | undefined;
+  const sender = (routing?.sender as string) || '';
+  const target = (routing?.target as string) || to;
+  const targetColor = (routing?.targetColor as string) || undefined;
+  const agentColor = getAgentColor(to, targetColor);
+  const displayTo = formatAgentName(to);
+
+  return (
+    <ToolShell color={agentColor.text} isError={isError} errorMessage={errorMessage}>
+      <StaticHeader
+        icon={Mail}
+        color={agentColor.text}
+        title={
+          <span className="text-xs font-medium text-foreground">
+            Message to{' '}
+            <span style={{ color: agentColor.text }}>{displayTo}</span>
+          </span>
+        }
+      />
+      <div className="px-3 pb-3 space-y-2">
+        {summary && (
+          <p className="text-xs text-foreground/90 leading-relaxed">{summary}</p>
+        )}
+        {message && message !== summary && (
+          <div>
+            <button
+              onClick={() => setOpen(v => !v)}
+              className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors"
+            >
+              {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+              Full message
+            </button>
+            {open && (
+              <pre className="mt-1 text-[11px] font-mono whitespace-pre-wrap break-words text-muted-foreground/80 rounded p-2" style={{ background: 'rgba(0,0,0,0.15)' }}>
+                {message}
+              </pre>
+            )}
+          </div>
+        )}
+        {(sender || target) && (
+          <p className="text-[10px] text-muted-foreground font-mono">
+            {sender && `From: ${sender}`}{sender && target ? ' → ' : ''}{target && `To: ${target}`}
+          </p>
+        )}
+      </div>
+    </ToolShell>
+  );
+}
+
+// ─── AskUserQuestion ──────────────────────────────────────────────────────────
+
+type OptionItem = string | { label?: string; description?: string; value?: string; [k: string]: unknown };
+type QuestionItem =
+  | string
+  | { question?: string; header?: string; options?: OptionItem[]; multiSelect?: boolean; [k: string]: unknown };
+
+function optionLabel(opt: OptionItem): string {
+  if (typeof opt === 'string') return opt;
+  return (opt.label as string) || (opt.value as string) || JSON.stringify(opt);
+}
+
+function optionDesc(opt: OptionItem): string | undefined {
+  if (typeof opt === 'string') return undefined;
+  return opt.description as string | undefined;
+}
+
+function renderQuestion(q: QuestionItem): { text: string; header?: string; options?: OptionItem[]; multiSelect?: boolean } {
+  if (typeof q === 'string') return { text: q };
+  return {
+    text: (q.question as string) || (q.header as string) || JSON.stringify(q),
+    header: q.header as string | undefined,
+    options: q.options as OptionItem[] | undefined,
+    multiSelect: q.multiSelect as boolean | undefined,
+  };
+}
+
+function AskUserQuestionTool({ input, output, isError, errorMessage }: ToolProps) {
+  const [open, setOpen] = useState(true);
+  const color = TOOL_COLORS.AskUserQuestion;
+  const rawQuestions = ((output?.questions ?? input?.questions) as QuestionItem[]) || [];
+  const answers: Record<string, string> = ((output?.answers ?? input?.answers) as Record<string, string>) || {};
+
+  return (
+    <ToolShell color={color} isError={isError} errorMessage={errorMessage}>
+      <CollapsibleHeader
+        icon={HelpCircle}
+        color={color}
+        title={<span className="text-xs font-medium text-foreground">User Questions</span>}
+        extra={<Badge color={color}>{rawQuestions.length} {rawQuestions.length === 1 ? 'question' : 'questions'}</Badge>}
+        open={open}
+        onToggle={() => setOpen(v => !v)}
+      />
+      {open && rawQuestions.length > 0 && (
+        <div className="px-3 pb-3 space-y-3">
+          {rawQuestions.map((raw, i) => {
+            const q = renderQuestion(raw);
+            return (
+              <div key={i} className={i > 0 ? 'pt-3 border-t border-white/[0.06]' : ''}>
+                {q.header && q.header !== q.text && (
+                  <p className="text-[10px] text-muted-foreground mb-1 uppercase tracking-wide font-medium">{q.header}</p>
+                )}
+                <p className="text-xs font-medium text-foreground/90 leading-relaxed">{q.text}</p>
+                {q.options && q.options.length > 0 && (
+                  <div className="mt-1.5 flex flex-col gap-1">
+                    {q.options.map((opt, j) => (
+                      <div key={j} className="flex items-baseline gap-2">
+                        <span className="text-[10px] px-2 py-0.5 rounded border font-mono shrink-0"
+                          style={{ borderColor: `${color}40`, color, background: `${color}12` }}>
+                          {optionLabel(opt)}
+                        </span>
+                        {optionDesc(opt) && (
+                          <span className="text-[10px] text-muted-foreground/70">{optionDesc(opt)}</span>
+                        )}
+                      </div>
+                    ))}
+                    {q.multiSelect && (
+                      <span className="text-[9px] text-muted-foreground/50 mt-0.5">multi-select</span>
+                    )}
+                  </div>
+                )}
+                {answers[q.text] && (
+                  <p className="mt-1.5 text-xs text-muted-foreground leading-relaxed">{answers[q.text]}</p>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </ToolShell>
+  );
+}
+
+// ─── TeamCreate ───────────────────────────────────────────────────────────────
+
+function TeamCreateTool({ input, output, isError, errorMessage }: ToolProps) {
+  const color = TOOL_COLORS.TeamCreate;
+  const teamName = (output?.team_name ?? input?.team_name) as string || '';
+  const agentType = (input?.agent_type as string) || '';
+  const description = (input?.description as string) || '';
+  const configPath = (output?.team_file_path as string) || '';
+
+  return (
+    <ToolShell color={color} isError={isError} errorMessage={errorMessage}>
+      <StaticHeader
+        icon={UsersRound}
+        color={color}
+        title={<span className="text-xs font-medium text-foreground">Team Created: {teamName}</span>}
+      />
+      <div className="px-3 pb-3 space-y-2">
+        {description && <p className="text-xs text-muted-foreground/80 leading-relaxed">{description}</p>}
+        <div className="flex items-center gap-2 flex-wrap">
+          {agentType && <Badge color={color}>Lead: {agentType}</Badge>}
+        </div>
+        {configPath && (
+          <p className="text-[10px] font-mono text-muted-foreground/60 truncate">{configPath}</p>
+        )}
+      </div>
+    </ToolShell>
+  );
+}
+
 // ─── Fallback ─────────────────────────────────────────────────────────────────
 
 function FallbackTool({
@@ -820,7 +1003,10 @@ export function ToolCallCard({
     case 'TaskCreate': return <TaskCreateTool {...props} />;
     case 'TaskUpdate': return <TaskUpdateTool {...props} />;
     case 'TodoWrite':  return <TodoWriteTool {...props} />;
-    case 'ToolSearch': return <ToolSearchTool {...props} />;
-    default:           return <FallbackTool toolName={toolName} {...props} />;
+    case 'ToolSearch':      return <ToolSearchTool {...props} />;
+    case 'SendMessage':     return <SendMessageTool {...props} />;
+    case 'AskUserQuestion': return <AskUserQuestionTool {...props} />;
+    case 'TeamCreate':      return <TeamCreateTool {...props} />;
+    default:                return <FallbackTool toolName={toolName} {...props} />;
   }
 }

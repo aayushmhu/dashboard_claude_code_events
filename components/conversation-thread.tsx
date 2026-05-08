@@ -1,13 +1,26 @@
 'use client';
 
 import { Event } from '@/lib/types';
-import { formatRelativeTime, formatAbsoluteTime, formatTokens, calcCost, formatCost } from '@/lib/utils';
-import { BUBBLE_COLORS, ROLE_COLORS } from '@/lib/colors';
+import { formatRelativeTime, formatAbsoluteTime, formatTokens, calcCost, formatCost, formatAgentName, getAgentIconType } from '@/lib/utils';
+import { BUBBLE_COLORS, ROLE_COLORS, getAgentColor } from '@/lib/colors';
 import { ToolCallCard } from '@/components/tool-call-card';
-import { Badge } from '@/components/ui/badge';
 import ReactMarkdown from 'react-markdown';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
-import { Bot, User, Play, BellRing } from 'lucide-react';
+import { Bot, User, Play, BellRing, Crown, ShieldCheck, FlaskConical, Server, Layout, Cloud, Database, FileText } from 'lucide-react';
+
+function getAgentIconComponent(iconType: string): React.ElementType {
+  switch (iconType) {
+    case 'crown':        return Crown;
+    case 'shield-check': return ShieldCheck;
+    case 'flask-conical':return FlaskConical;
+    case 'server':       return Server;
+    case 'layout':       return Layout;
+    case 'cloud':        return Cloud;
+    case 'database':     return Database;
+    case 'file-text':    return FileText;
+    default:             return Bot;
+  }
+}
 
 interface ConversationThreadProps {
   events: Event[];
@@ -96,55 +109,96 @@ export function ConversationThread({ events }: ConversationThreadProps) {
 
     if (event.event_type === 'Stop' || event.event_type === 'SubagentStop') {
       const isSubagent = event.event_type === 'SubagentStop';
-      const agentType = isSubagent
-        ? (event.raw_payload as Record<string, unknown>)?.agent_type as string | undefined
-        : null;
-      const label = agentType ? `${agentType}` : 'Claude';
-      const bubble = isSubagent ? BUBBLE_COLORS.subagent : BUBBLE_COLORS.assistant;
-      const iconColor = isSubagent ? ROLE_COLORS.subagent : ROLE_COLORS.assistant;
 
-      rendered.push(
-        <div key={event.id} className="flex flex-col items-start gap-1.5 my-4 px-4">
-          <div className="flex items-center gap-2">
-            <div className="flex items-center gap-1.5 text-xs font-medium" style={{ color: iconColor }}>
-              <div
-                className="w-5 h-5 rounded-full flex items-center justify-center"
-                style={{ background: `${iconColor}20` }}
-              >
-                <Bot className="h-3 w-3" style={{ color: iconColor }} />
+      if (isSubagent) {
+        const agentName = event.agent || 'subagent';
+        const displayName = formatAgentName(agentName);
+        const agentColor = getAgentColor(agentName);
+        const AgentIcon = getAgentIconComponent(getAgentIconType(agentName));
+
+        rendered.push(
+          <div key={event.id} className="flex flex-col items-start gap-1.5 my-4 px-4">
+            <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5 text-xs font-medium" style={{ color: agentColor.text }}>
+                <div
+                  className="w-5 h-5 rounded-full flex items-center justify-center"
+                  style={{ background: agentColor.bg }}
+                >
+                  <AgentIcon className="h-3 w-3" style={{ color: agentColor.text }} />
+                </div>
+                <span>{displayName}</span>
+                <span
+                  className="text-[10px] px-1.5 py-0 rounded"
+                  style={{ background: agentColor.bg, border: `1px solid ${agentColor.border}`, color: agentColor.text }}
+                >
+                  agent
+                </span>
               </div>
-              <span>{label}</span>
-              {agentType && (
-                <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
-                  subagent
-                </Badge>
-              )}
+              <Timestamp ts={event.timestamp} />
             </div>
-            <Timestamp ts={event.timestamp} />
+            <div
+              className="max-w-[82%] min-w-0 overflow-hidden rounded-2xl rounded-tl-md px-4 py-3 text-sm"
+              style={{
+                background: agentColor.bg,
+                border: `1px solid ${agentColor.border}`,
+                borderLeft: `3px solid ${agentColor.text}`,
+              }}
+            >
+              <div className="prose prose-sm dark:prose-invert max-w-none prose-p:leading-relaxed prose-p:my-1 prose-pre:my-2 prose-headings:my-2 prose-pre:overflow-x-auto prose-code:break-words">
+                <ReactMarkdown>{event.content || ''}</ReactMarkdown>
+              </div>
+            </div>
+            {event.total_tokens ? (
+              <div className="ml-1 mt-0.5">
+                <span className="text-[10px] text-muted-foreground/50 bg-muted/30 border border-border/20 rounded-full px-2 py-0.5 font-mono">
+                  {formatTokens(event.total_tokens)} tokens
+                  {event.input_tokens && event.output_tokens
+                    ? ` · ${formatCost(calcCost(event.input_tokens, event.output_tokens, event.cache_creation_tokens ?? 0, event.cache_read_tokens ?? 0))}`
+                    : ''}
+                </span>
+              </div>
+            ) : null}
           </div>
-          <div
-            className="max-w-[82%] min-w-0 overflow-hidden rounded-2xl rounded-tl-md px-4 py-3 text-sm"
-            style={{
-              background: bubble.bg,
-              border: `1px solid ${bubble.border}`,
-            }}
-          >
-            <div className="prose prose-sm dark:prose-invert max-w-none prose-p:leading-relaxed prose-p:my-1 prose-pre:my-2 prose-headings:my-2 prose-pre:overflow-x-auto prose-code:break-words">
-              <ReactMarkdown>{event.content || ''}</ReactMarkdown>
+        );
+      } else {
+        rendered.push(
+          <div key={event.id} className="flex flex-col items-start gap-1.5 my-4 px-4">
+            <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5 text-xs font-medium" style={{ color: ROLE_COLORS.assistant }}>
+                <div
+                  className="w-5 h-5 rounded-full flex items-center justify-center"
+                  style={{ background: `${ROLE_COLORS.assistant}20` }}
+                >
+                  <Bot className="h-3 w-3" style={{ color: ROLE_COLORS.assistant }} />
+                </div>
+                <span>Claude</span>
+              </div>
+              <Timestamp ts={event.timestamp} />
             </div>
+            <div
+              className="max-w-[82%] min-w-0 overflow-hidden rounded-2xl rounded-tl-md px-4 py-3 text-sm"
+              style={{
+                background: BUBBLE_COLORS.assistant.bg,
+                border: `1px solid ${BUBBLE_COLORS.assistant.border}`,
+              }}
+            >
+              <div className="prose prose-sm dark:prose-invert max-w-none prose-p:leading-relaxed prose-p:my-1 prose-pre:my-2 prose-headings:my-2 prose-pre:overflow-x-auto prose-code:break-words">
+                <ReactMarkdown>{event.content || ''}</ReactMarkdown>
+              </div>
+            </div>
+            {event.total_tokens ? (
+              <div className="ml-1 mt-0.5">
+                <span className="text-[10px] text-muted-foreground/50 bg-muted/30 border border-border/20 rounded-full px-2 py-0.5 font-mono">
+                  {formatTokens(event.total_tokens)} tokens
+                  {event.input_tokens && event.output_tokens
+                    ? ` · ${formatCost(calcCost(event.input_tokens, event.output_tokens, event.cache_creation_tokens ?? 0, event.cache_read_tokens ?? 0))}`
+                    : ''}
+                </span>
+              </div>
+            ) : null}
           </div>
-          {event.total_tokens ? (
-            <div className="ml-1 mt-0.5">
-              <span className="text-[10px] text-muted-foreground/50 bg-muted/30 border border-border/20 rounded-full px-2 py-0.5 font-mono">
-                {formatTokens(event.total_tokens)} tokens
-                {event.input_tokens && event.output_tokens
-                  ? ` · ${formatCost(calcCost(event.input_tokens, event.output_tokens, event.cache_creation_tokens ?? 0, event.cache_read_tokens ?? 0))}`
-                  : ''}
-              </span>
-            </div>
-          ) : null}
-        </div>
-      );
+        );
+      }
       continue;
     }
 

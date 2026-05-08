@@ -153,6 +153,24 @@ export function formatDurationMs(ms: number): string {
   return `${Math.floor(ms / 60000)}m ${Math.round((ms % 60000) / 1000)}s`;
 }
 
+export function formatAgentName(name: string): string {
+  if (!name) return 'Agent';
+  return name.replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+
+export function getAgentIconType(name: string): string {
+  const lower = name.toLowerCase();
+  if (lower.includes('lead') || lower.includes('manager')) return 'crown';
+  if (lower.includes('security') || lower.includes('analyzer')) return 'shield-check';
+  if (lower.includes('test') || lower.includes('qa')) return 'flask-conical';
+  if (lower.includes('backend') || lower.includes('api') || lower.includes('server')) return 'server';
+  if (lower.includes('frontend') || lower.includes('ui') || lower.includes('design')) return 'layout';
+  if (lower.includes('devops') || lower.includes('deploy') || lower.includes('infra')) return 'cloud';
+  if (lower.includes('data') || lower.includes('database') || lower.includes('db')) return 'database';
+  if (lower.includes('doc') || lower.includes('writer') || lower.includes('content')) return 'file-text';
+  return 'bot';
+}
+
 export const CHART_COLORS = {
   blue: 'hsl(217, 91%, 60%)',
   indigo: 'hsl(239, 84%, 67%)',

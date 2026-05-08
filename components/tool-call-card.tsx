@@ -50,8 +50,8 @@ function JsonBlock({ data }: { data: unknown }) {
   }
   return (
     <pre
-      className="overflow-x-auto rounded-md p-3 text-xs font-mono text-foreground/80 whitespace-pre-wrap break-words max-h-[200px] overflow-y-auto"
-      style={{ background: 'rgba(0,0,0,0.2)' }}
+      className="overflow-x-auto rounded-md p-3 text-xs font-mono whitespace-pre-wrap break-words max-h-[200px] overflow-y-auto"
+      style={{ background: '#1a1a1a', color: '#d4d4d4' }}
     >
       {display}
     </pre>
@@ -61,20 +61,20 @@ function JsonBlock({ data }: { data: unknown }) {
 function DiffView({ patch }: { patch: string }) {
   const lines = (typeof patch === 'string' ? patch : JSON.stringify(patch, null, 2)).split('\n');
   return (
-    <div className="rounded-md overflow-hidden text-[11px] font-mono leading-5" style={{ background: 'rgba(0,0,0,0.25)' }}>
+    <div className="rounded-md overflow-hidden text-[11px] font-mono leading-5" style={{ background: '#1a1a1a' }}>
       {lines.map((line, i) => {
         let bg = 'transparent';
-        let color = 'rgba(200,200,200,0.7)';
+        let color = '#c8c8c8';
         if (line.startsWith('+++') || line.startsWith('---')) {
-          color = 'rgba(148,163,184,0.7)';
+          color = '#94a3b8';
         } else if (line.startsWith('@@')) {
-          bg = 'rgba(59,130,246,0.12)';
+          bg = 'rgba(59,130,246,0.22)';
           color = '#93C5FD';
         } else if (line.startsWith('+')) {
-          bg = 'rgba(16,185,129,0.15)';
+          bg = 'rgba(16,185,129,0.20)';
           color = '#86EFAC';
         } else if (line.startsWith('-')) {
-          bg = 'rgba(239,68,68,0.15)';
+          bg = 'rgba(239,68,68,0.20)';
           color = '#FCA5A5';
         }
         return (
@@ -95,13 +95,13 @@ function CodeBlock({ content, filePath }: { content: string; filePath?: string }
       {filePath && (
         <div
           className="flex items-center justify-between px-3 py-1 text-[10px]"
-          style={{ background: 'rgba(0,0,0,0.35)' }}
+          style={{ background: '#111' }}
         >
           <span className="text-muted-foreground font-mono truncate">{getFileName(filePath)}</span>
           <span className="text-muted-foreground ml-2 flex-shrink-0">{lang} · {lines.length} lines</span>
         </div>
       )}
-      <div className="overflow-x-auto overflow-y-auto" style={{ background: 'rgba(0,0,0,0.2)', maxHeight: '280px' }}>
+      <div className="overflow-x-auto overflow-y-auto" style={{ background: '#1a1a1a', maxHeight: '280px' }}>
         <table className="border-collapse w-full" style={{ fontSize: '11px', fontFamily: 'ui-monospace, monospace' }}>
           <tbody>
             {lines.map((line, i) => (
@@ -112,7 +112,7 @@ function CodeBlock({ content, filePath }: { content: string; filePath?: string }
                 >
                   {i + 1}
                 </td>
-                <td style={{ color: 'rgb(200,200,200)', paddingRight: '12px', whiteSpace: 'pre-wrap', wordBreak: 'break-all', verticalAlign: 'top' }}>
+                <td style={{ color: '#d4d4d4', paddingRight: '12px', whiteSpace: 'pre-wrap', wordBreak: 'break-all', verticalAlign: 'top' }}>
                   {line || ' '}
                 </td>
               </tr>
@@ -173,8 +173,8 @@ function ToolShell({
     <div
       className="rounded-lg overflow-hidden text-sm"
       style={{
-        background: 'rgba(0,0,0,0.12)',
-        border: `1px solid ${isError ? 'rgba(239,68,68,0.25)' : 'rgba(255,255,255,0.07)'}`,
+        background: 'hsl(var(--card))',
+        border: `1px solid ${isError ? 'rgba(239,68,68,0.30)' : 'hsl(var(--border))'}`,
         borderLeft: isError ? '3px solid #EF4444' : `3px solid ${color}`,
       }}
     >
@@ -201,7 +201,7 @@ function CollapsibleHeader({
 }) {
   return (
     <div
-      className="flex items-center gap-2 px-3 py-2 cursor-pointer select-none hover:bg-white/[0.02] transition-colors"
+      className="flex items-center gap-2 px-3 py-2 cursor-pointer select-none hover:bg-muted/40 transition-colors"
       onClick={onToggle}
     >
       <Icon className="h-3.5 w-3.5 flex-shrink-0" style={{ color }} />
@@ -502,13 +502,13 @@ function GrepTool({ input, output, isError, errorMessage }: ToolProps) {
     }
     if (!lines.length) return <p className="text-xs text-muted-foreground italic">No matches</p>;
     return (
-      <div className="rounded-md overflow-hidden overflow-y-auto" style={{ background: 'rgba(0,0,0,0.2)', maxHeight: '300px' }}>
+      <div className="rounded-md overflow-hidden overflow-y-auto" style={{ background: '#1a1a1a', maxHeight: '300px' }}>
         {lines.map((line, i) => {
           const colonIdx = line.indexOf(':');
           const lineNum = colonIdx > -1 ? line.slice(0, colonIdx) : '';
           const rest = colonIdx > -1 ? line.slice(colonIdx + 1) : line;
           return (
-            <div key={i} className="flex text-[11px] font-mono hover:bg-white/[0.03]">
+            <div key={i} className="flex text-[11px] font-mono hover:bg-white/[0.06]">
               <span
                 className="select-none text-right flex-shrink-0 pl-2 pr-3 py-0.5"
                 style={{ color: 'rgba(148,163,184,0.5)', width: '42px', minWidth: '42px' }}
@@ -517,7 +517,7 @@ function GrepTool({ input, output, isError, errorMessage }: ToolProps) {
               </span>
               <span
                 className="py-0.5 pr-3 flex-1"
-                style={{ color: 'rgb(200,200,200)', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}
+                style={{ color: '#d4d4d4', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}
               >
                 {highlightPattern(rest)}
               </span>

@@ -288,17 +288,6 @@ const MessageBubble = memo(function MessageBubble({ msg, onRetry }: { msg: ChatM
           </div>
         </div>
         <div className="max-w-[78%] space-y-2">
-          {/* File mention chips */}
-          {(msg.mentionedFiles?.length ?? 0) > 0 && (
-            <div className="flex flex-wrap gap-1.5 justify-end">
-              {msg.mentionedFiles!.map(f => (
-                <span key={f} className="flex items-center gap-1 text-[10px] font-mono px-1.5 py-0.5 rounded"
-                  style={{ background: 'rgba(59,130,246,0.12)', color: '#93C5FD', border: '1px solid rgba(59,130,246,0.25)' }}>
-                  <File className="h-2.5 w-2.5" />@{f.split('/').pop()}
-                </span>
-              ))}
-            </div>
-          )}
           {/* Attached images */}
           {(msg.attachedImages?.length ?? 0) > 0 && (
             <div className="flex flex-wrap gap-2 justify-end">
@@ -310,7 +299,14 @@ const MessageBubble = memo(function MessageBubble({ msg, onRetry }: { msg: ChatM
           )}
           <div className="rounded-2xl rounded-tr-md px-4 py-3 text-sm text-foreground whitespace-pre-wrap"
             style={{ background: BUBBLE_COLORS.user.bg, border: `1px solid ${BUBBLE_COLORS.user.border}` }}>
-            {msg.content}
+            {msg.content.split(/(@\S+)/g).map((part, i) =>
+              part.match(/^@\S+$/) ? (
+                <span key={i} className="inline-flex items-center gap-0.5 font-mono text-[11px] px-1 py-0.5 rounded align-middle"
+                  style={{ background: 'rgba(59,130,246,0.15)', color: '#93C5FD' }}>
+                  <File className="h-2.5 w-2.5" />{part}
+                </span>
+              ) : <span key={i}>{part}</span>
+            )}
           </div>
         </div>
       </div>
@@ -510,6 +506,7 @@ export function ChatClient({
   const [showFilePicker, setShowFilePicker] = useState(false);
   const [filePickerQuery, setFilePickerQuery] = useState('');
   const [filePickerFiles, setFilePickerFiles] = useState<string[]>([]);
+  const [filePickerDirs, setFilePickerDirs] = useState<string[]>([]);
   const [filePickerIdx, setFilePickerIdx] = useState(0);
 
   const abortRef = useRef<AbortController | null>(null);
@@ -822,15 +819,52 @@ export function ChatClient({
 
   const selectFileMention = useCallback((relPath: string) => {
     setShowFilePicker(false);
+    setFilePickerDirs([]);
     if (atPositionRef.current !== null && textareaRef.current) {
       const cursor = textareaRef.current.selectionStart;
       const before = prompt.slice(0, atPositionRef.current);
       const after = prompt.slice(cursor);
-      setPrompt(before + after);
+      // Keep @relPath inline in the message (trailing space so picker won't re-trigger)
+      const newPrompt = before + '@' + relPath + ' ' + after;
+      setPrompt(newPrompt);
+      const newCursor = before.length + 1 + relPath.length + 1;
+      setTimeout(() => {
+        if (textareaRef.current) {
+          textareaRef.current.focus();
+          textareaRef.current.setSelectionRange(newCursor, newCursor);
+        }
+      }, 0);
     }
     atPositionRef.current = null;
     const fullPath = effectiveDir ? `${effectiveDir}/${relPath}` : relPath;
     setMentionedFiles(prev => prev.find(f => f.path === fullPath) ? prev : [...prev, { path: fullPath, relPath }]);
+  }, [prompt, effectiveDir]);
+
+  // Drill into a directory — keeps picker open and re-searches within it
+  const selectDirMention = useCallback((dirPath: string) => {
+    const newQuery = dirPath + '/';
+    if (atPositionRef.current !== null && textareaRef.current) {
+      const cursor = textareaRef.current.selectionStart;
+      const before = prompt.slice(0, atPositionRef.current);
+      const after = prompt.slice(cursor);
+      const newPrompt = before + '@' + newQuery + after;
+      setPrompt(newPrompt);
+      const newCursor = before.length + 1 + newQuery.length;
+      setTimeout(() => {
+        if (textareaRef.current) {
+          textareaRef.current.focus();
+          textareaRef.current.setSelectionRange(newCursor, newCursor);
+        }
+      }, 0);
+    }
+    setFilePickerQuery(newQuery);
+    setFilePickerIdx(0);
+    if (effectiveDir) {
+      fetch(`/api/chat/filesearch?cwd=${encodeURIComponent(effectiveDir)}&q=${encodeURIComponent(newQuery)}`)
+        .then(r => r.json())
+        .then(d => { setFilePickerFiles(d.files || []); setFilePickerDirs(d.dirs || []); setFilePickerIdx(0); })
+        .catch(() => {});
+    }
   }, [prompt, effectiveDir]);
 
   // ─── Image attachment ──────────────────────────────────────────────────────
@@ -905,18 +939,18 @@ export function ChatClient({
       // Prepare image data for stream-json stdin (base64 passed directly)
       const imagePayload = imgs.map(img => ({ data: img.dataUrl, mimeType: img.mimeType }));
 
-      // Inject file contents into the prompt
+      // Replace inline @relPath tokens with file content at their position
       let fullPrompt = text;
-      if (files.length > 0) {
-        const blocks: string[] = [];
-        for (const f of files) {
-          try {
-            const r = await fetch(`/api/chat/filecontent?path=${encodeURIComponent(f.path)}`);
-            const d = await r.json();
-            if (d.content) blocks.push(`<file path="${f.relPath}">\n${d.content}\n</file>`);
-          } catch { /* skip */ }
-        }
-        if (blocks.length) fullPrompt = blocks.join('\n\n') + '\n\n' + text;
+      for (const f of files) {
+        const token = '@' + f.relPath;
+        if (!fullPrompt.includes(token)) continue;
+        try {
+          const r = await fetch(`/api/chat/filecontent?path=${encodeURIComponent(f.path)}`);
+          const d = await r.json();
+          if (d.content) {
+            fullPrompt = fullPrompt.replace(token, `<file path="${f.relPath}">\n${d.content}\n</file>`);
+          }
+        } catch { /* skip */ }
       }
 
       const res = await fetch('/api/chat/stream', {
@@ -1074,6 +1108,7 @@ export function ChatClient({
     setMentionedFiles([]);
     setShowCmdPalette(false);
     setShowFilePicker(false);
+    setFilePickerDirs([]);
     sendMessageCore(text, imgs, files);
   };
 
@@ -1094,12 +1129,18 @@ export function ChatClient({
       if (e.key === 'Enter')     { e.preventDefault(); executeSlashCommand(filteredCmds[cmdSelectedIdx].name); return; }
       if (e.key === 'Escape')    { setShowCmdPalette(false); setPrompt(''); return; }
     }
-    // File picker navigation
-    if (showFilePicker && filePickerFiles.length > 0) {
-      if (e.key === 'ArrowDown') { e.preventDefault(); setFilePickerIdx(i => Math.min(i + 1, filePickerFiles.length - 1)); return; }
+    // File picker navigation (dirs first, then files in combined index)
+    if (showFilePicker && (filePickerDirs.length > 0 || filePickerFiles.length > 0)) {
+      const total = filePickerDirs.length + filePickerFiles.length;
+      if (e.key === 'ArrowDown') { e.preventDefault(); setFilePickerIdx(i => Math.min(i + 1, total - 1)); return; }
       if (e.key === 'ArrowUp')   { e.preventDefault(); setFilePickerIdx(i => Math.max(i - 1, 0)); return; }
-      if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); selectFileMention(filePickerFiles[filePickerIdx]); return; }
-      if (e.key === 'Escape')    { setShowFilePicker(false); atPositionRef.current = null; return; }
+      if (e.key === 'Enter' || e.key === 'Tab') {
+        e.preventDefault();
+        if (filePickerIdx < filePickerDirs.length) selectDirMention(filePickerDirs[filePickerIdx]);
+        else selectFileMention(filePickerFiles[filePickerIdx - filePickerDirs.length]);
+        return;
+      }
+      if (e.key === 'Escape') { setShowFilePicker(false); setFilePickerDirs([]); atPositionRef.current = null; return; }
     }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -1138,7 +1179,7 @@ export function ChatClient({
           fileSearchTimerRef.current = setTimeout(() => {
             fetch(`/api/chat/filesearch?cwd=${encodeURIComponent(effectiveDir)}&q=${encodeURIComponent(query)}`)
               .then(r => r.json())
-              .then(d => setFilePickerFiles(d.files || []))
+              .then(d => { setFilePickerFiles(d.files || []); setFilePickerDirs(d.dirs || []); })
               .catch(() => {});
           }, 150);
         }
@@ -1146,6 +1187,7 @@ export function ChatClient({
       }
     }
     setShowFilePicker(false);
+    setFilePickerDirs([]);
     atPositionRef.current = null;
   };
 
@@ -1672,19 +1714,9 @@ export function ChatClient({
             }}
           />
 
-          {/* Attachment strip */}
-          {(attachedImages.length > 0 || mentionedFiles.length > 0) && (
+          {/* Attachment strip — images only (file refs appear inline in textarea) */}
+          {attachedImages.length > 0 && (
             <div className="flex flex-wrap items-center gap-2 px-4 pt-3">
-              {mentionedFiles.map(f => (
-                <div key={f.path} className="flex items-center gap-1 text-[11px] font-mono rounded-md px-2 py-0.5"
-                  style={{ background: 'rgba(59,130,246,0.10)', color: '#93C5FD', border: '1px solid rgba(59,130,246,0.25)' }}>
-                  <File className="h-3 w-3 flex-shrink-0" />
-                  <span className="max-w-[180px] truncate">{f.relPath}</span>
-                  <button onClick={() => setMentionedFiles(prev => prev.filter(x => x.path !== f.path))} className="ml-0.5 hover:text-white">
-                    <X className="h-3 w-3" />
-                  </button>
-                </div>
-              ))}
               {attachedImages.map((img, i) => (
                 <div key={i} className="relative group">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -1721,14 +1753,25 @@ export function ChatClient({
             )}
 
             {/* File picker */}
-            {showFilePicker && filePickerFiles.length > 0 && (
-              <div className="absolute bottom-full left-4 right-4 mb-2 bg-card border border-border rounded-xl shadow-2xl overflow-hidden z-50 max-h-52 overflow-y-auto">
-                <div className="px-3 py-1.5 text-[10px] text-muted-foreground border-b border-border/50 font-medium sticky top-0 bg-card">
-                  {filePickerQuery ? `Files matching "${filePickerQuery}"` : 'Files'}
+            {showFilePicker && (filePickerDirs.length > 0 || filePickerFiles.length > 0) && (
+              <div className="absolute bottom-full left-4 right-4 mb-2 bg-card border border-border rounded-xl shadow-2xl overflow-hidden z-50 max-h-64 overflow-y-auto">
+                <div className="px-3 py-1.5 text-[10px] text-muted-foreground border-b border-border/50 font-medium sticky top-0 bg-card flex items-center gap-1.5">
+                  <AtSign className="h-3 w-3" />
+                  {filePickerQuery ? filePickerQuery : 'Files'}
                 </div>
+                {filePickerDirs.map((dir, i) => (
+                  <button key={dir}
+                    className={`w-full flex items-center gap-2 px-3 py-1.5 text-left transition-colors ${i === filePickerIdx ? 'bg-muted/60' : 'hover:bg-muted/40'}`}
+                    onClick={() => selectDirMention(dir)}
+                  >
+                    <Folder className="h-3 w-3 text-amber-400 flex-shrink-0" />
+                    <span className="text-xs font-mono truncate flex-1">{dir}/</span>
+                    <ChevronRight className="h-3 w-3 text-muted-foreground/40 flex-shrink-0" />
+                  </button>
+                ))}
                 {filePickerFiles.map((f, i) => (
                   <button key={f}
-                    className={`w-full flex items-center gap-2 px-3 py-1.5 text-left transition-colors ${i === filePickerIdx ? 'bg-muted/60' : 'hover:bg-muted/40'}`}
+                    className={`w-full flex items-center gap-2 px-3 py-1.5 text-left transition-colors ${i + filePickerDirs.length === filePickerIdx ? 'bg-muted/60' : 'hover:bg-muted/40'}`}
                     onClick={() => selectFileMention(f)}
                   >
                     <File className="h-3 w-3 text-muted-foreground flex-shrink-0" />

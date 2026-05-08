@@ -4,6 +4,7 @@ import { Event } from '@/lib/types';
 import { formatRelativeTime, formatAbsoluteTime, formatTokens, calcCost, formatCost, formatAgentName, getAgentIconType } from '@/lib/utils';
 import { BUBBLE_COLORS, ROLE_COLORS, getAgentColor } from '@/lib/colors';
 import { ToolCallCard } from '@/components/tool-call-card';
+import { TaskNotificationCard, AgentReportCard, AgentMessageCard, detectUserMessageType } from '@/components/task-notification-card';
 import ReactMarkdown from 'react-markdown';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import { Bot, User, Play, BellRing, Crown, ShieldCheck, FlaskConical, Server, Layout, Cloud, Database, FileText } from 'lucide-react';
@@ -84,6 +85,19 @@ export function ConversationThread({ events }: ConversationThreadProps) {
     }
 
     if (event.event_type === 'UserPromptSubmit') {
+      const msgType = detectUserMessageType(event.content || '');
+      if (msgType === 'task-notification') {
+        rendered.push(<TaskNotificationCard key={event.id} content={event.content || ''} />);
+        continue;
+      }
+      if (msgType === 'agent-report') {
+        rendered.push(<AgentReportCard key={event.id} content={event.content || ''} />);
+        continue;
+      }
+      if (msgType === 'agent-message') {
+        rendered.push(<AgentMessageCard key={event.id} content={event.content || ''} />);
+        continue;
+      }
       rendered.push(
         <div key={event.id} className="flex flex-col items-end gap-1.5 my-4 px-4">
           <div className="flex items-center gap-2">

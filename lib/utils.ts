@@ -253,6 +253,15 @@ export const TOOL_COLORS: Record<string, string> = {
   Grep:       '#818CF8',
   TaskCreate: '#8B5CF6',
   TaskUpdate: '#8B5CF6',
+  TaskOutput: '#8B5CF6',
   TodoWrite:  '#14B8A6',
   ToolSearch: '#64748B',
 };
+
+export function detectMessageType(content: string): 'task-notification' | 'agent-report' | 'agent-message' | 'user' {
+  const t = content.trimStart();
+  if (t.startsWith('<task-notification>')) return 'task-notification';
+  if (t.startsWith('<analysis>') || t.startsWith('<summary>')) return 'agent-report';
+  if (t.startsWith('<teammate-message>') || t.startsWith('<team-') || t.startsWith('</teammate-message>')) return 'agent-message';
+  return 'user';
+}

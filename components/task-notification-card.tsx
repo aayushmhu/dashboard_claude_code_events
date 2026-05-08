@@ -5,18 +5,6 @@ import { CheckCircle, XCircle, ChevronDown, ChevronRight, FileText, MessageSquar
 import ReactMarkdown from 'react-markdown';
 import { formatTokens, formatDuration } from '@/lib/utils';
 
-// ─── Detection ────────────────────────────────────────────────────────────────
-
-export type UserMessageType = 'task-notification' | 'agent-report' | 'agent-message' | 'user';
-
-export function detectUserMessageType(content: string): UserMessageType {
-  const trimmed = content.trimStart();
-  if (trimmed.startsWith('<task-notification>')) return 'task-notification';
-  if (trimmed.startsWith('<analysis>') || trimmed.startsWith('<summary>')) return 'agent-report';
-  if (trimmed.startsWith('<teammate-message>') || trimmed.startsWith('<team-')) return 'agent-message';
-  return 'user';
-}
-
 // ─── Shared primitives ────────────────────────────────────────────────────────
 
 const PROSE = 'prose prose-sm dark:prose-invert max-w-none prose-p:leading-relaxed prose-p:my-1 prose-pre:my-2 prose-headings:my-2 prose-pre:overflow-x-auto prose-code:break-words';

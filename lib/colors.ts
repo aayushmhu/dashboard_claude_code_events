@@ -36,6 +36,7 @@ export const TOOL_COLORS: Record<string, string> = {
   SendMessage:     '#06B6D4',
   AskUserQuestion: '#3B82F6',
   TeamCreate:      '#8B5CF6',
+  TaskOutput:      '#8B5CF6',
 };
 
 // Token breakdown colors — used in token usage charts, cost estimation

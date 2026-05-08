@@ -16,9 +16,9 @@ import {
   Crown, ShieldCheck, FlaskConical, Server, Layout, Cloud, Database,
 } from 'lucide-react';
 import { TOOL_COLORS, BUBBLE_COLORS, ROLE_COLORS, getAgentColor } from '@/lib/colors';
-import { formatCost, formatRelativeTime, formatDuration, formatTokens, truncateId, parseDbDate, formatAgentName, getAgentIconType } from '@/lib/utils';
+import { formatCost, formatRelativeTime, formatDuration, formatTokens, truncateId, parseDbDate, formatAgentName, getAgentIconType, detectMessageType } from '@/lib/utils';
 import { ToolCallCard } from '@/components/tool-call-card';
-import { TaskNotificationCard, AgentReportCard, AgentMessageCard, detectUserMessageType } from '@/components/task-notification-card';
+import { TaskNotificationCard, AgentReportCard, AgentMessageCard } from '@/components/task-notification-card';
 import { Session, Event } from '@/lib/types';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -297,7 +297,7 @@ function PermissionDenialCard({ msg, onRetry }: { msg: ChatMessage; onRetry?: (m
 
 const MessageBubble = memo(function MessageBubble({ msg, onRetry }: { msg: ChatMessage; onRetry?: (mode: 'acceptEdits' | 'dangerouslySkipPermissions') => void }) {
   if (msg.role === 'user') {
-    const msgType = detectUserMessageType(msg.content);
+    const msgType = detectMessageType(msg.content);
     if (msgType === 'task-notification') return <TaskNotificationCard content={msg.content} />;
     if (msgType === 'agent-report')      return <AgentReportCard      content={msg.content} />;
     if (msgType === 'agent-message')     return <AgentMessageCard     content={msg.content} />;

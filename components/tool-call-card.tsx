@@ -5,7 +5,7 @@ import {
   File, Eye, Terminal, FolderSearch, Search, Bot, Slash,
   PlusCircle, RefreshCw, ListChecks, Wrench, Pencil,
   ChevronDown, ChevronRight, Check, X,
-  Mail, HelpCircle, UsersRound,
+  Mail, HelpCircle, UsersRound, ClipboardCheck,
 } from 'lucide-react';
 import { TOOL_COLORS, getAgentColor } from '@/lib/colors';
 import { getFileName, getLanguageLabel, formatDurationMs, formatAgentName } from '@/lib/utils';
@@ -947,6 +947,84 @@ function TeamCreateTool({ input, output, isError, errorMessage }: ToolProps) {
   );
 }
 
+// ─── TaskOutput ───────────────────────────────────────────────────────────────
+
+function TaskOutputTool({ input, output, isError, errorMessage }: ToolProps) {
+  const [open, setOpen] = useState(false);
+  const color = TOOL_COLORS.TaskOutput;
+  const taskId = (input?.task_id as string) || '';
+  const block = input?.block as boolean | undefined;
+  const timeout = input?.timeout as number | undefined;
+
+  const task = output?.task as Record<string, unknown> | undefined;
+  const retrievalStatus = (output?.retrieval_status as string) || '';
+
+  const statusColor = retrievalStatus === 'retrieved' ? '#10B981'
+    : retrievalStatus === 'pending'  ? '#F59E0B'
+    : retrievalStatus === 'failed'   ? '#EF4444'
+    : '#64748B';
+
+  let preview: string | null = null;
+  if (task?.output) {
+    try {
+      const parsed = JSON.parse(task.output as string);
+      const raw = parsed?.message?.content ?? parsed?.content ?? parsed?.result;
+      if (typeof raw === 'string') {
+        preview = raw.slice(0, 200);
+      } else if (Array.isArray(raw)) {
+        const txt = raw.find((b: unknown) => (b as Record<string, unknown>)?.type === 'text');
+        if (txt) preview = String((txt as Record<string, unknown>).text ?? '').slice(0, 200);
+      }
+    } catch { /* raw data — not user-facing */ }
+  }
+
+  return (
+    <ToolShell color={color} isError={isError} errorMessage={errorMessage}>
+      <CollapsibleHeader
+        icon={ClipboardCheck}
+        color={color}
+        title={
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="text-xs font-medium text-foreground">Task Output</span>
+            {taskId && (
+              <span className="text-[10px] font-mono text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded">
+                {taskId.slice(0, 8)}
+              </span>
+            )}
+          </div>
+        }
+        extra={retrievalStatus ? <Badge color={statusColor}>{retrievalStatus}</Badge> : undefined}
+        open={open}
+        onToggle={() => setOpen(v => !v)}
+      />
+      {open && (
+        <div className="px-3 pb-3 space-y-2">
+          {preview !== null ? (
+            <div>
+              <p className="text-[10px] text-muted-foreground mb-1">Preview</p>
+              <p className="text-[11px] text-foreground/80 leading-relaxed font-mono whitespace-pre-wrap break-words">
+                {preview}{preview.length >= 200 ? '…' : ''}
+              </p>
+            </div>
+          ) : task?.output ? (
+            <p className="text-xs text-muted-foreground italic">Task data available</p>
+          ) : null}
+          {(block !== undefined || timeout !== undefined) && (
+            <div className="flex items-center gap-3 pt-1 border-t border-white/[0.06]">
+              {block !== undefined && (
+                <span className="text-[10px] text-muted-foreground">block: {String(block)}</span>
+              )}
+              {timeout !== undefined && (
+                <span className="text-[10px] text-muted-foreground">timeout: {timeout}ms</span>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </ToolShell>
+  );
+}
+
 // ─── Fallback ─────────────────────────────────────────────────────────────────
 
 function FallbackTool({
@@ -1000,8 +1078,9 @@ export function ToolCallCard({
     case 'Grep':       return <GrepTool {...props} />;
     case 'Agent':      return <AgentTool {...props} />;
     case 'Skill':      return <SkillTool {...props} />;
-    case 'TaskCreate': return <TaskCreateTool {...props} />;
-    case 'TaskUpdate': return <TaskUpdateTool {...props} />;
+    case 'TaskCreate':  return <TaskCreateTool  {...props} />;
+    case 'TaskUpdate':  return <TaskUpdateTool  {...props} />;
+    case 'TaskOutput':  return <TaskOutputTool  {...props} />;
     case 'TodoWrite':  return <TodoWriteTool {...props} />;
     case 'ToolSearch':      return <ToolSearchTool {...props} />;
     case 'SendMessage':     return <SendMessageTool {...props} />;

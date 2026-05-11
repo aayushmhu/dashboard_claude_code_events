@@ -16,7 +16,7 @@ import {
   AlertTriangle,
 } from 'lucide-react';
 import { StatsOverview, TimelinePoint, ToolStats, AgentStats, Session, TokenTotals, ModelStats } from '@/lib/types';
-import { formatTokens, formatCost } from '@/lib/utils';
+import { formatTokens, formatCost, calcCost } from '@/lib/utils';
 import Link from 'next/link';
 
 async function getData() {
@@ -96,13 +96,17 @@ export default async function DashboardPage() {
                 <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Token Usage</p>
                 <span className="text-xs text-muted-foreground group-hover:text-primary transition-colors">View details →</span>
               </div>
-              <div className="grid grid-cols-2 gap-x-8 gap-y-3 sm:grid-cols-4 lg:grid-cols-6">
+              <div className="grid grid-cols-2 gap-x-8 gap-y-3 sm:grid-cols-4 lg:grid-cols-7">
                 <div>
                   <p className="text-xs text-muted-foreground mb-0.5">Total Tokens</p>
                   <p className="text-lg font-semibold">{formatTokens(totals.total_tokens)}</p>
                 </div>
                 <div>
-                  <p className="text-xs text-muted-foreground mb-0.5">Estimated Cost</p>
+                  <p className="text-xs text-muted-foreground mb-0.5">Excl. Cache</p>
+                  <p className="text-lg font-semibold text-blue-400">{formatCost(calcCost(totals.input_tokens, totals.output_tokens, 0, 0))}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground mb-0.5">Total Cost</p>
                   <p className="text-lg font-semibold text-amber-400">{formatCost(totals.total_cost)}</p>
                 </div>
                 <div>

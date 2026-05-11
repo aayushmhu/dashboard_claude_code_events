@@ -9,7 +9,7 @@ import { ModelBreakdown } from '@/components/charts/model-breakdown';
 import { CostBreakdown } from '@/components/charts/cost-breakdown';
 import { DateRangePicker } from '@/components/date-range-picker';
 import { Coins, Zap, DollarSign, Database, TrendingUp, Sparkles } from 'lucide-react';
-import { formatTokens, formatCost, calcCacheSavings, parseDbDate } from '@/lib/utils';
+import { formatTokens, formatCost, calcCost, calcCacheSavings, parseDbDate } from '@/lib/utils';
 import { TokenTotals, ProjectTokenStats, ModelStats, TokenTimelinePoint } from '@/lib/types';
 import { differenceInDays } from 'date-fns';
 import { Suspense } from 'react';
@@ -209,7 +209,8 @@ export default async function TokensPage({
                     <th className="pb-3 pr-6 font-medium text-right">Output</th>
                     <th className="pb-3 pr-6 font-medium text-right">Cache Read</th>
                     <th className="pb-3 pr-6 font-medium text-right">Total</th>
-                    <th className="pb-3 font-medium text-right">Cost</th>
+                    <th className="pb-3 pr-6 font-medium text-right">Excl. Cache</th>
+                    <th className="pb-3 font-medium text-right">Total Cost</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -220,6 +221,7 @@ export default async function TokensPage({
                       <td className="py-3 pr-6 text-right text-muted-foreground">{formatTokens(p.output_tokens)}</td>
                       <td className="py-3 pr-6 text-right text-emerald-400">{formatTokens(p.cache_read_tokens)}</td>
                       <td className="py-3 pr-6 text-right font-medium">{formatTokens(p.total_tokens)}</td>
+                      <td className="py-3 pr-6 text-right font-medium text-blue-400">{formatCost(calcCost(p.input_tokens, p.output_tokens, 0, 0))}</td>
                       <td className="py-3 text-right font-medium text-amber-400">{formatCost(p.cost)}</td>
                     </tr>
                   ))}
@@ -231,7 +233,9 @@ export default async function TokensPage({
 
         {/* Pricing note */}
         <p className="text-xs text-muted-foreground/60 text-center pb-2">
-          Pricing: input $3/M · output $15/M · cache write $3.75/M · cache read $0.30/M (Sonnet rates)
+          Pricing: input $3/M · output $15/M · cache write $3.75/M · cache read $0.30/M (Sonnet rates) ·
+          <span className="text-blue-400/70"> Excl. Cache</span> = input + output only ·
+          <span className="text-amber-400/70"> Total Cost</span> = all token types
         </p>
         </>
         )}

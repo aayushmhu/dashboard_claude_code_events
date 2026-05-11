@@ -18,7 +18,7 @@ export async function generateMetadata({
 }
 
 async function getData(id: string) {
-  const base = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+  const base = process.env.NEXT_PUBLIC_APP_URL || `http://localhost:${process.env.PORT || 3000}`;
   const [session, events] = await Promise.all([
     fetch(`${base}/api/sessions/${id}`, { cache: 'no-store' }).then((r) => r.json()),
     fetch(`${base}/api/sessions/${id}/events`, { cache: 'no-store' }).then((r) => r.json()),

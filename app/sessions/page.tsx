@@ -16,7 +16,7 @@ interface SearchParams {
 }
 
 async function getData(searchParams: SearchParams) {
-  const base = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+  const base = process.env.NEXT_PUBLIC_APP_URL || `http://localhost:${process.env.PORT || 3000}`;
   const params = new URLSearchParams();
   if (searchParams.project) params.set('project', searchParams.project);
   if (searchParams.page) params.set('page', searchParams.page);

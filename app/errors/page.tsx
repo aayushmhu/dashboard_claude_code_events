@@ -10,7 +10,7 @@ import Link from 'next/link';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 
 async function getData(page: number) {
-  const base = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+  const base = process.env.NEXT_PUBLIC_APP_URL || `http://localhost:${process.env.PORT || 3000}`;
   return fetch(`${base}/api/errors?page=${page}&limit=20`, { cache: 'no-store' }).then((r) =>
     r.json()
   );

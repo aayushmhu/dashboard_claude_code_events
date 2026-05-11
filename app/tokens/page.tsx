@@ -20,7 +20,7 @@ interface SearchParams {
 }
 
 async function getData(sp: SearchParams) {
-  const base = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+  const base = process.env.NEXT_PUBLIC_APP_URL || `http://localhost:${process.env.PORT || 3000}`;
   const params = new URLSearchParams();
   if (sp.start) params.set('start', sp.start);
   if (sp.end) params.set('end', sp.end);

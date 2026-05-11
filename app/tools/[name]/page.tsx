@@ -17,7 +17,7 @@ export async function generateMetadata({
 }
 
 async function getData(name: string, errorsOnly: boolean) {
-  const base = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+  const base = process.env.NEXT_PUBLIC_APP_URL || `http://localhost:${process.env.PORT || 3000}`;
   const params = new URLSearchParams({ limit: '50' });
   if (errorsOnly) params.set('errors_only', 'true');
   return fetch(`${base}/api/tools/${encodeURIComponent(name)}?${params}`, {

@@ -20,7 +20,7 @@ import { formatTokens, formatCost } from '@/lib/utils';
 import Link from 'next/link';
 
 async function getData() {
-  const base = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+  const base = process.env.NEXT_PUBLIC_APP_URL || `http://localhost:${process.env.PORT || 3000}`;
   const [stats, timeline, tools, sessionsRes, agents, tokens, heatmap] = await Promise.all([
     fetch(`${base}/api/stats`, { cache: 'no-store' }).then((r) => r.json()).catch(() => ({})),
     fetch(`${base}/api/events/timeline?days=7`, { cache: 'no-store' }).then((r) => r.json()).catch(() => []),

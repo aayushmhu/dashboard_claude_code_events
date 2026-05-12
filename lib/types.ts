@@ -11,6 +11,12 @@ export interface Session {
   duration_seconds: number;
   agent_types: string[];
   total_tokens: number;
+  input_tokens: number;
+  output_tokens: number;
+  cache_creation_tokens: number;
+  cache_read_tokens: number;
+  model: string | null;
+  models_used: string[];
 }
 
 export interface Event {
@@ -40,6 +46,7 @@ export interface Event {
   cache_creation_tokens: number | null;
   cache_read_tokens: number | null;
   total_tokens: number | null;
+  notification_type: string | null;
 }
 
 export interface ProjectStats {

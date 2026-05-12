@@ -45,7 +45,13 @@ export async function GET(request: NextRequest) {
         COALESCE(SUM(e.is_error), 0) AS error_count,
         TIMESTAMPDIFF(SECOND, s.started_at, s.last_seen_at) AS duration_seconds,
         GROUP_CONCAT(DISTINCT e.tool_name ORDER BY e.tool_name SEPARATOR ',') AS tools_used_raw,
-        COALESCE(SUM(e.total_tokens), 0) AS total_tokens
+        COALESCE(SUM(e.total_tokens), 0) AS total_tokens,
+        COALESCE(SUM(e.input_tokens), 0) AS input_tokens,
+        COALESCE(SUM(e.output_tokens), 0) AS output_tokens,
+        COALESCE(SUM(e.cache_creation_tokens), 0) AS cache_creation_tokens,
+        COALESCE(SUM(e.cache_read_tokens), 0) AS cache_read_tokens,
+        s.model,
+        GROUP_CONCAT(DISTINCT e.model ORDER BY e.model SEPARATOR ',') AS models_used_raw
       FROM cc_sessions s
       LEFT JOIN cc_events e ON s.session_id = e.session_id
       ${whereClause}
@@ -70,6 +76,14 @@ export async function GET(request: NextRequest) {
       error_count: Number(r.error_count),
       duration_seconds: Number(r.duration_seconds),
       total_tokens: Number(r.total_tokens),
+      input_tokens: Number(r.input_tokens),
+      output_tokens: Number(r.output_tokens),
+      cache_creation_tokens: Number(r.cache_creation_tokens),
+      cache_read_tokens: Number(r.cache_read_tokens),
+      model: r.model ?? null,
+      models_used: r.models_used_raw
+        ? r.models_used_raw.split(',').filter(Boolean)
+        : [],
       tools_used: r.tools_used_raw
         ? r.tools_used_raw.split(',').filter(Boolean)
         : [],

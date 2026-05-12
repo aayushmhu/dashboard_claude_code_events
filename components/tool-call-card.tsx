@@ -59,32 +59,95 @@ function JsonBlock({ data }: { data: unknown }) {
 }
 
 function DiffView({ patch }: { patch: string }) {
-  const lines = (typeof patch === 'string' ? patch : JSON.stringify(patch, null, 2)).split('\n');
+  const raw = typeof patch === 'string' ? patch : JSON.stringify(patch, null, 2);
+  const lines = raw.split('\n');
+
+  let oldLine = 1;
+  let newLine = 1;
+
+  const rows = lines.map((line, i) => {
+    let bg = 'transparent';
+    let color = '#c8c8c8';
+    let oldNum: number | null = null;
+    let newNum: number | null = null;
+
+    if (line.startsWith('---') || line.startsWith('+++')) {
+      color = '#94a3b8';
+    } else if (line.startsWith('@@')) {
+      bg = 'rgba(59,130,246,0.18)';
+      color = '#93C5FD';
+      const m = line.match(/@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+      if (m) { oldLine = parseInt(m[1]); newLine = parseInt(m[2]); }
+    } else if (line.startsWith('+')) {
+      bg = 'rgba(16,185,129,0.18)';
+      color = '#86EFAC';
+      newNum = newLine++;
+    } else if (line.startsWith('-')) {
+      bg = 'rgba(239,68,68,0.18)';
+      color = '#FCA5A5';
+      oldNum = oldLine++;
+    } else if (line.startsWith(' ')) {
+      oldNum = oldLine++;
+      newNum = newLine++;
+    }
+
+    return (
+      <tr key={i} style={{ background: bg }}>
+        <td className="select-none text-right pr-2 pl-3 align-top" style={{ color: '#4b5563', minWidth: '32px', width: '1%', whiteSpace: 'nowrap' }}>
+          {oldNum ?? ''}
+        </td>
+        <td className="select-none text-right pr-3 align-top" style={{ color: '#4b5563', minWidth: '32px', width: '1%', whiteSpace: 'nowrap', borderRight: '1px solid rgba(255,255,255,0.06)' }}>
+          {newNum ?? ''}
+        </td>
+        <td className="pl-3 pr-3 align-top" style={{ color, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+          {line || ' '}
+        </td>
+      </tr>
+    );
+  });
+
   return (
-    <div className="rounded-md overflow-hidden text-[11px] font-mono leading-5" style={{ background: '#1a1a1a' }}>
-      {lines.map((line, i) => {
-        let bg = 'transparent';
-        let color = '#c8c8c8';
-        if (line.startsWith('+++') || line.startsWith('---')) {
-          color = '#94a3b8';
-        } else if (line.startsWith('@@')) {
-          bg = 'rgba(59,130,246,0.22)';
-          color = '#93C5FD';
-        } else if (line.startsWith('+')) {
-          bg = 'rgba(16,185,129,0.20)';
-          color = '#86EFAC';
-        } else if (line.startsWith('-')) {
-          bg = 'rgba(239,68,68,0.20)';
-          color = '#FCA5A5';
-        }
-        return (
-          <div key={i} style={{ background: bg, color, padding: '0 12px', minHeight: '20px' }}>
-            {line || ' '}
-          </div>
-        );
-      })}
+    <div className="rounded-md overflow-hidden text-[11px] font-mono leading-5" style={{ background: '#1a1a1a', maxHeight: '400px', overflowY: 'auto' }}>
+      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <tbody>{rows}</tbody>
+      </table>
     </div>
   );
+}
+
+// Build a unified-diff string from old/new text using LCS on lines.
+function lineDiff(oldStr: string, newStr: string): string {
+  const o = oldStr.split('\n');
+  const n = newStr.split('\n');
+  const m = o.length, k = n.length;
+
+  // LCS table
+  const dp: number[][] = Array.from({ length: m + 1 }, () => new Array(k + 1).fill(0));
+  for (let i = 1; i <= m; i++)
+    for (let j = 1; j <= k; j++)
+      dp[i][j] = o[i - 1] === n[j - 1] ? dp[i - 1][j - 1] + 1 : Math.max(dp[i - 1][j], dp[i][j - 1]);
+
+  // Backtrack
+  const out: string[] = [];
+  let i = m, j = k;
+  while (i > 0 || j > 0) {
+    if (i > 0 && j > 0 && o[i - 1] === n[j - 1]) {
+      out.unshift(` ${o[i - 1]}`);
+      i--; j--;
+    } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
+      out.unshift(`+${n[j - 1]}`);
+      j--;
+    } else {
+      out.unshift(`-${o[i - 1]}`);
+      i--;
+    }
+  }
+  return out.join('\n');
+}
+
+// Show a new file's content as all-added lines.
+function newFileDiff(content: string): string {
+  return content.split('\n').map(l => `+${l}`).join('\n');
 }
 
 function CodeBlock({ content, filePath }: { content: string; filePath?: string }) {
@@ -201,15 +264,15 @@ function CollapsibleHeader({
 }) {
   return (
     <div
-      className="flex items-center gap-2 px-3 py-2 cursor-pointer select-none hover:bg-muted/40 transition-colors"
+      className="flex items-start gap-2 px-3 py-2 cursor-pointer select-none hover:bg-muted/40 transition-colors"
       onClick={onToggle}
     >
-      <Icon className="h-3.5 w-3.5 flex-shrink-0" style={{ color }} />
+      <Icon className="h-3.5 w-3.5 flex-shrink-0 mt-0.5" style={{ color }} />
       <div className="flex-1 min-w-0">{title}</div>
-      {extra && <div className="flex items-center gap-1.5 flex-shrink-0">{extra}</div>}
+      {extra && <div className="flex items-center gap-1.5 flex-shrink-0 mt-0.5">{extra}</div>}
       {open
-        ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
-        : <ChevronRight className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />}
+        ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0 mt-0.5" />
+        : <ChevronRight className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0 mt-0.5" />}
     </div>
   );
 }
@@ -258,7 +321,7 @@ function WriteTool({ input, output, isError, errorMessage }: ToolProps) {
           {patch
             ? <DiffView patch={patch} />
             : content
-            ? <CodeBlock content={content} filePath={filePath} />
+            ? <DiffView patch={newFileDiff(content)} />
             : <span className="text-xs text-muted-foreground">No content preview</span>}
         </div>
       )}
@@ -288,30 +351,11 @@ function EditTool({ input, output, isError, errorMessage }: ToolProps) {
       />
       {open && (
         <div className="px-3 pb-3">
-          {patch ? (
-            <DiffView patch={patch} />
-          ) : (
-            <div className="space-y-2">
-              {oldStr && (
-                <div>
-                  <p className="text-[10px] text-muted-foreground mb-1">Removed</p>
-                  <pre
-                    className="text-[11px] font-mono p-2 rounded whitespace-pre-wrap break-words max-h-[160px] overflow-y-auto"
-                    style={{ background: 'rgba(239,68,68,0.12)', color: '#FCA5A5' }}
-                  >{oldStr}</pre>
-                </div>
-              )}
-              {newStr && (
-                <div>
-                  <p className="text-[10px] text-muted-foreground mb-1">Added</p>
-                  <pre
-                    className="text-[11px] font-mono p-2 rounded whitespace-pre-wrap break-words max-h-[160px] overflow-y-auto"
-                    style={{ background: 'rgba(16,185,129,0.12)', color: '#86EFAC' }}
-                  >{newStr}</pre>
-                </div>
-              )}
-            </div>
-          )}
+          {patch
+            ? <DiffView patch={patch} />
+            : (oldStr || newStr)
+            ? <DiffView patch={lineDiff(oldStr, newStr)} />
+            : <span className="text-xs text-muted-foreground">No diff available</span>}
         </div>
       )}
     </ToolShell>
@@ -368,7 +412,10 @@ function BashTool({ input, output, isError, errorMessage }: ToolProps) {
         color={color}
         title={
           <div className="min-w-0">
-            <span className="text-xs font-mono text-foreground/90 block truncate">{cmd}</span>
+            <span
+              className="text-xs font-mono text-foreground/90 break-all"
+              style={{ display: '-webkit-box', WebkitLineClamp: 4, WebkitBoxOrient: 'vertical', overflow: 'hidden', whiteSpace: 'pre-wrap' }}
+            >{cmd}</span>
             {desc && <span className="text-[10px] text-muted-foreground">{desc}</span>}
           </div>
         }

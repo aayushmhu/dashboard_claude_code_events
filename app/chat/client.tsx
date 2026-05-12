@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback, useMemo, memo } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo, memo } from 'react';
 import { useRouter } from 'next/navigation';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -13,10 +13,10 @@ import {
   RefreshCw, AlertCircle, Clock, Coins, Settings,
   File, FileText, FileCode, X, Pencil, FilePlus, FolderPlus,
   Eye, ImageIcon, AtSign, Slash, Paperclip,
-  Crown, ShieldCheck, FlaskConical, Server, Layout, Cloud, Database,
+  Crown, ShieldCheck, FlaskConical, Server, Layout, Cloud, Database, Lock, PauseCircle,
 } from 'lucide-react';
 import { TOOL_COLORS, BUBBLE_COLORS, ROLE_COLORS, getAgentColor } from '@/lib/colors';
-import { formatCost, formatRelativeTime, formatDuration, formatTokens, truncateId, parseDbDate, formatAgentName, getAgentIconType, detectMessageType } from '@/lib/utils';
+import { formatCost, formatRelativeTime, formatDuration, formatTokens, truncateId, parseDbDate, formatAgentName, getAgentIconType, detectMessageType, calcCost } from '@/lib/utils';
 import { ToolCallCard } from '@/components/tool-call-card';
 import { TaskNotificationCard, AgentReportCard, AgentMessageCard } from '@/components/task-notification-card';
 import { Session, Event } from '@/lib/types';
@@ -42,6 +42,7 @@ interface ChatMessage {
   cacheCreationTokens?: number;
   cacheReadTokens?: number;
   totalTokens?: number;
+  notificationType?: string;
   attachedImages?: string[];   // base64 dataUrls for display
   mentionedFiles?: string[];   // relative paths for display
 }
@@ -161,17 +162,28 @@ function eventsToMessages(events: Event[]): ChatMessage[] {
       });
     } else if (ev.event_type === 'PreToolUse') {
       const post = events.slice(i + 1).find(e => e.event_type === 'PostToolUse' && e.tool_name === ev.tool_name);
-      if (post) skipIds.add(post.id);
-      msgs.push({
-        id: String(ev.id), role: 'tool', content: '',
-        toolName: ev.tool_name || 'Unknown',
-        toolInput: ev.tool_input ?? undefined,
-        toolOutput: post?.tool_output ?? null,
-        toolIsError: post?.is_error ?? false,
-        timestamp: new Date(ev.timestamp),
-      });
+      if (post) {
+        skipIds.add(post.id);
+        msgs.push({
+          id: String(ev.id), role: 'tool', content: '',
+          toolName: ev.tool_name || 'Unknown',
+          toolInput: ev.tool_input ?? undefined,
+          toolOutput: post.tool_output ?? null,
+          toolIsError: post.is_error ?? false,
+          timestamp: new Date(ev.timestamp),
+        });
+      } else {
+        // No PostToolUse — permission was denied or tool was blocked
+        msgs.push({
+          id: String(ev.id), role: 'permission_denial', content: '',
+          toolName: ev.tool_name || 'Unknown',
+          toolInput: ev.tool_input ?? undefined,
+          permissionDenial: { tool_name: ev.tool_name || 'Unknown', tool_input: (ev.tool_input ?? {}) as Record<string, unknown> },
+          timestamp: new Date(ev.timestamp),
+        });
+      }
     } else if (ev.event_type === 'Notification') {
-      msgs.push({ id: String(ev.id), role: 'system', content: ev.content || '', timestamp: new Date(ev.timestamp) });
+      msgs.push({ id: String(ev.id), role: 'system', content: ev.content || '', timestamp: new Date(ev.timestamp), notificationType: ev.notification_type ?? undefined });
     }
   }
   return msgs;
@@ -259,18 +271,40 @@ function ChatToolCard({ msg }: { msg: ChatMessage }) {
 
 function PermissionDenialCard({ msg, onRetry }: { msg: ChatMessage; onRetry?: (mode: 'acceptEdits' | 'dangerouslySkipPermissions') => void }) {
   const d = msg.permissionDenial;
+  const [expanded, setExpanded] = useState(false);
+  // Find the most descriptive input field: command, path, description, or first value
+  const primaryInput = d?.tool_input
+    ? (d.tool_input.command ?? d.tool_input.path ?? d.tool_input.description ?? Object.values(d.tool_input)[0])
+    : null;
+  const inputStr = primaryInput != null ? String(primaryInput) : null;
+
   return (
     <div className="rounded-lg p-3 text-sm flex items-start gap-2" style={{ background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.25)' }}>
       <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" style={{ color: '#F59E0B' }} />
       <div className="flex-1 min-w-0">
-        <p className="text-xs font-medium" style={{ color: '#F59E0B' }}>Permission Denied</p>
-        {d && (
-          <p className="text-xs text-muted-foreground mt-0.5">
-            <span className="font-mono">{d.tool_name}</span> was blocked
-            {d.tool_input && (
-              <span className="ml-1">({Object.entries(d.tool_input).slice(0, 2).map(([k, v]) => `${k}: ${String(v).slice(0, 40)}`).join(', ')})</span>
-            )}
+        <div className="flex items-center gap-2">
+          <p className="text-xs font-medium" style={{ color: '#F59E0B' }}>
+            {onRetry ? 'Permission Denied' : 'Permission Requested'}
           </p>
+          <span className="text-xs font-mono px-1.5 py-0.5 rounded" style={{ background: 'rgba(245,158,11,0.15)', color: '#F59E0B' }}>
+            {d?.tool_name}
+          </span>
+        </div>
+        {inputStr && (
+          <div className="mt-1.5">
+            <button
+              onClick={() => setExpanded(e => !e)}
+              className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+            >
+              {expanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+              {expanded ? 'Hide input' : 'Show what Claude asked to do'}
+            </button>
+            {expanded && (
+              <pre className="mt-1.5 text-[11px] font-mono text-muted-foreground bg-black/20 rounded p-2 overflow-x-auto whitespace-pre-wrap break-all max-h-48">
+                {inputStr}
+              </pre>
+            )}
+          </div>
         )}
         {onRetry && (
           <div className="flex items-center gap-2 mt-2.5">
@@ -395,15 +429,17 @@ const MessageBubble = memo(function MessageBubble({ msg, onRetry }: { msg: ChatM
   if (msg.role === 'permission_denial') return <div className="my-2 px-4"><PermissionDenialCard msg={msg} onRetry={onRetry} /></div>;
 
   if (msg.role === 'system') {
+    const isPermission = msg.notificationType === 'permission_prompt';
+    const isIdle       = msg.notificationType === 'idle_prompt';
+    const color = msg.isError ? '#EF4444' : isPermission ? '#F59E0B' : isIdle ? '#818CF8' : ROLE_COLORS.system;
+    const bg    = msg.isError ? 'rgba(239,68,68,0.10)' : isPermission ? 'rgba(245,158,11,0.10)' : isIdle ? 'rgba(129,140,248,0.10)' : BUBBLE_COLORS.system.bg;
+    const border = msg.isError ? 'rgba(239,68,68,0.30)' : isPermission ? 'rgba(245,158,11,0.30)' : isIdle ? 'rgba(129,140,248,0.30)' : BUBBLE_COLORS.system.border;
+    const Icon = msg.isError ? AlertTriangle : isPermission ? Lock : isIdle ? PauseCircle : BellRing;
     return (
       <div className="flex justify-center my-3">
         <div className="flex items-center gap-1.5 text-xs rounded-full px-3 py-1.5"
-          style={{
-            background: msg.isError ? 'rgba(239,68,68,0.10)' : BUBBLE_COLORS.system.bg,
-            border: `1px solid ${msg.isError ? 'rgba(239,68,68,0.30)' : BUBBLE_COLORS.system.border}`,
-            color: msg.isError ? '#EF4444' : ROLE_COLORS.system,
-          }}>
-          {msg.isError ? <AlertTriangle className="h-3 w-3" /> : <BellRing className="h-3 w-3" />}
+          style={{ background: bg, border: `1px solid ${border}`, color }}>
+          <Icon className="h-3 w-3" />
           <span>{msg.content}</span>
         </div>
       </div>
@@ -553,8 +589,16 @@ export function ChatClient({
   const [filePickerDirs, setFilePickerDirs] = useState<string[]>([]);
   const [filePickerIdx, setFilePickerIdx] = useState(0);
 
+  const [hasMoreEvents, setHasMoreEvents] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+
   const abortRef = useRef<AbortController | null>(null);
   const threadEndRef = useRef<HTMLDivElement>(null);
+  const threadScrollRef = useRef<HTMLDivElement>(null);
+  const oldestEventIdRef = useRef<number | null>(null);
+  const isPrependingRef = useRef(false);
+  const prevScrollHeightRef = useRef(0);
+  const prevScrollTopRef = useRef(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const atPositionRef = useRef<number | null>(null);
@@ -663,10 +707,35 @@ export function ChatClient({
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Scroll to bottom on new messages
-  useEffect(() => {
-    threadEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  // After prepending older messages, restore scroll so the previously-visible content stays in place.
+  // useLayoutEffect fires before useEffect for the same dependency — so we restore position here
+  // but do NOT reset isPrependingRef yet (useEffect reads it next).
+  useLayoutEffect(() => {
+    if (isPrependingRef.current && threadScrollRef.current && prevScrollHeightRef.current) {
+      threadScrollRef.current.scrollTop =
+        threadScrollRef.current.scrollHeight - prevScrollHeightRef.current + prevScrollTopRef.current;
+      prevScrollHeightRef.current = 0;
+      prevScrollTopRef.current = 0;
+    }
   }, [messages]);
+
+  // Scroll to bottom on new messages — skip when we're prepending older ones.
+  // Always resets isPrependingRef so the flag is cleared after both effects run.
+  useEffect(() => {
+    if (!isPrependingRef.current) {
+      threadEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+    isPrependingRef.current = false;
+  }, [messages]);
+
+  // Instant scroll to bottom when a session finishes loading (messages are now rendered).
+  // Can't rely on the messages effect above because loadingSession=true hides the thread
+  // while messages are being set, so threadEndRef isn't in the DOM at that point.
+  useEffect(() => {
+    if (!loadingSession && threadScrollRef.current) {
+      threadScrollRef.current.scrollTop = threadScrollRef.current.scrollHeight;
+    }
+  }, [loadingSession]);
 
   const loadSession = async (sessionId: string) => {
     abortRef.current?.abort();
@@ -680,18 +749,47 @@ export function ChatClient({
     // Sync URL
     router.push(`/chat/${sessionId}`, { scroll: false });
 
-    try {
-      const res = await fetch(`/api/sessions/${sessionId}/events`);
-      const events: Event[] = await res.json();
-      setMessages(eventsToMessages(Array.isArray(events) ? events : []));
+    oldestEventIdRef.current = null;
+    setHasMoreEvents(false);
 
-      // Set cwd from session
+    try {
+      const res = await fetch(`/api/sessions/${sessionId}/events?limit=50`);
+      const data = await res.json();
+      const events: Event[] = Array.isArray(data) ? data : (data.events ?? []);
+      setMessages(eventsToMessages(events));
+      setHasMoreEvents(data.has_more ?? false);
+      if (events.length > 0) oldestEventIdRef.current = events[0].id;
+
       const session = sessions.find(s => s.session_id === sessionId);
       if (session?.cwd) setSelectedDirectory(session.cwd);
     } catch { /* silent */ } finally {
       setLoadingSession(false);
     }
   };
+
+  const loadMoreEvents = useCallback(async () => {
+    if (!currentSessionId || !hasMoreEvents || loadingMore || oldestEventIdRef.current === null) return;
+    // Capture BEFORE any state change — spinner appearing outside the container
+    // doesn't affect scrollHeight, but capturing here avoids all timing ambiguity
+    isPrependingRef.current = true;
+    prevScrollHeightRef.current = threadScrollRef.current?.scrollHeight ?? 0;
+    prevScrollTopRef.current   = threadScrollRef.current?.scrollTop   ?? 0;
+    setLoadingMore(true);
+    try {
+      const res = await fetch(`/api/sessions/${currentSessionId}/events?limit=50&before_id=${oldestEventIdRef.current}`);
+      const data = await res.json();
+      const older: Event[] = data.events ?? [];
+      if (older.length > 0) {
+        oldestEventIdRef.current = older[0].id;
+        setMessages(prev => [...eventsToMessages(older), ...prev]);
+      } else {
+        isPrependingRef.current = false;
+      }
+      setHasMoreEvents(data.has_more ?? false);
+    } catch { isPrependingRef.current = false; } finally {
+      setLoadingMore(false);
+    }
+  }, [currentSessionId, hasMoreEvents, loadingMore]);
 
   const newChat = () => {
     abortRef.current?.abort();
@@ -1639,23 +1737,64 @@ export function ChatClient({
                 {truncateId(currentSessionId, 12)}
               </button>
             </div>
-            <div className="flex items-center gap-3 ml-auto shrink-0">
+            <div className="flex items-center gap-3 ml-auto shrink-0 flex-wrap">
               {activeSession && (
                 <>
-                  {activeSession.duration_seconds > 0 && <span className="hidden sm:flex items-center gap-1 text-xs text-muted-foreground"><Clock className="h-3 w-3" />{formatDuration(activeSession.duration_seconds)}</span>}
-                  {activeSession.total_tokens > 0 && <span className="hidden sm:flex items-center gap-1 text-xs text-muted-foreground"><Coins className="h-3 w-3" />{formatTokens(activeSession.total_tokens)}</span>}
-                  {activeSession.error_count > 0 && <span className="flex items-center gap-1 text-xs text-destructive"><AlertCircle className="h-3 w-3" />{activeSession.error_count}</span>}
+                  {activeSession.duration_seconds > 0 && (
+                    <span className="hidden sm:flex items-center gap-1 text-xs text-muted-foreground">
+                      <Clock className="h-3 w-3" />{formatDuration(activeSession.duration_seconds)}
+                    </span>
+                  )}
+                  {activeSession.total_tokens > 0 && (
+                    <span className="hidden sm:flex items-center gap-1 text-xs text-muted-foreground">
+                      <Coins className="h-3 w-3" />{formatTokens(activeSession.total_tokens)}
+                    </span>
+                  )}
+                  {activeSession.total_tokens > 0 && (() => {
+                    const totalCost = calcCost(activeSession.input_tokens, activeSession.output_tokens, activeSession.cache_creation_tokens, activeSession.cache_read_tokens);
+                    const exclCost  = calcCost(activeSession.input_tokens, activeSession.output_tokens, 0, 0);
+                    return (
+                      <span className="hidden sm:flex items-center gap-1.5 text-xs text-muted-foreground" title="Total cost / Excl. cache cost">
+                        <span>{formatCost(totalCost)}</span>
+                        <span className="text-border">|</span>
+                        <span className="text-blue-400">{formatCost(exclCost)}</span>
+                      </span>
+                    );
+                  })()}
+                  {activeSession.models_used?.length > 0 && (
+                    <span className="hidden md:flex items-center gap-1 text-xs text-muted-foreground/70 font-mono truncate max-w-[180px]" title={activeSession.models_used.join(', ')}>
+                      {activeSession.models_used.map(m => m.replace('claude-', '').replace(/-\d{8}$/, '')).join(', ')}
+                    </span>
+                  )}
+                  {activeSession.error_count > 0 && (
+                    <span className="flex items-center gap-1 text-xs text-destructive">
+                      <AlertCircle className="h-3 w-3" />{activeSession.error_count}
+                    </span>
+                  )}
                 </>
               )}
-              {sessionCost > 0 && <span className="text-xs text-muted-foreground">+{formatCost(sessionCost)}</span>}
               {isStreaming && <span className="flex items-center gap-1.5 text-xs text-primary"><span className="h-1.5 w-1.5 rounded-full bg-primary animate-pulse" />Running…</span>}
               {isLive(activeSession?.last_seen_at ?? '') && !isStreaming && <span className="flex items-center gap-1 text-xs text-emerald-400"><span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />Live</span>}
             </div>
           </div>
         )}
 
+        {/* Load-more indicator — outside the scroll container so it never affects scrollHeight */}
+        {loadingMore && (
+          <div className="shrink-0 flex justify-center py-1.5 border-b border-border/20">
+            <span className="text-[11px] text-muted-foreground animate-pulse">Loading earlier messages…</span>
+          </div>
+        )}
+
         {/* Message thread */}
-        <div className="flex-1 overflow-y-auto">
+        <div
+          ref={threadScrollRef}
+          className="flex-1 overflow-y-auto"
+          style={{ overflowAnchor: 'none' }}
+          onScroll={(e) => {
+            if (e.currentTarget.scrollTop < 120 && hasMoreEvents && !loadingMore) loadMoreEvents();
+          }}
+        >
           {loadingSession ? (
             <div className="p-6 space-y-5">
               {[...Array(4)].map((_, i) => (
@@ -1746,6 +1885,16 @@ export function ChatClient({
             </div>
           ) : (
             <div className="flex flex-col py-4 space-y-0.5">
+              {hasMoreEvents && !loadingMore && (
+                <div className="flex justify-center py-2">
+                  <button
+                    onClick={loadMoreEvents}
+                    className="text-[11px] text-muted-foreground hover:text-foreground transition-colors px-3 py-1 rounded-full border border-border/50 hover:border-border"
+                  >
+                    Load earlier messages
+                  </button>
+                </div>
+              )}
               {messages.map(msg => <MessageBubble key={msg.id} msg={msg} onRetry={retryWithPermission} />)}
               <div ref={threadEndRef} />
             </div>

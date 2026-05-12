@@ -1,11 +1,23 @@
 import { NextResponse } from 'next/server';
 import pool from '@/lib/db';
-import { RowDataPacket } from 'mysql2';
-import { calcCost } from '@/lib/utils';
+import { RowDataPacket } from '@/lib/db';
+
+// Per-row cost SQL — mixed models per time bucket, so computed in SQL
+const COST_SQL = `(CASE
+  WHEN model LIKE '%opus%' THEN
+    COALESCE(input_tokens,0)*15/1e6 + COALESCE(output_tokens,0)*75/1e6 +
+    COALESCE(cache_creation_tokens,0)*18.75/1e6 + COALESCE(cache_read_tokens,0)*1.5/1e6
+  WHEN model LIKE '%haiku%' THEN
+    COALESCE(input_tokens,0)*0.8/1e6 + COALESCE(output_tokens,0)*4/1e6 +
+    COALESCE(cache_creation_tokens,0)*1/1e6 + COALESCE(cache_read_tokens,0)*0.08/1e6
+  ELSE
+    COALESCE(input_tokens,0)*3/1e6 + COALESCE(output_tokens,0)*15/1e6 +
+    COALESCE(cache_creation_tokens,0)*3.75/1e6 + COALESCE(cache_read_tokens,0)*0.3/1e6
+END)`;
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
-  const granularity = searchParams.get('granularity') || 'day'; // 'hour' | 'day'
+  const granularity = searchParams.get('granularity') || 'day';
   const fmt = granularity === 'hour' ? '%Y-%m-%d %H:00:00' : '%Y-%m-%d';
   const start = searchParams.get('start') || '';
   const end = searchParams.get('end') || '';
@@ -13,17 +25,18 @@ export async function GET(request: Request) {
   const conditions: string[] = ['(input_tokens IS NOT NULL OR output_tokens IS NOT NULL)'];
   const params: unknown[] = [fmt];
   if (start) { conditions.push('timestamp >= ?'); params.push(start); }
-  if (end)   { conditions.push('timestamp < DATE_ADD(?, INTERVAL 1 DAY)'); params.push(end); }
+  if (end)   { conditions.push("timestamp < datetime(?, '+1 day')"); params.push(end); }
 
   try {
     const [rows] = await pool.query<RowDataPacket[]>(
       `SELECT
-        DATE_FORMAT(timestamp, ?) AS time,
-        COALESCE(SUM(input_tokens), 0)            AS input_tokens,
-        COALESCE(SUM(output_tokens), 0)           AS output_tokens,
-        COALESCE(SUM(cache_creation_tokens), 0)   AS cache_write_tokens,
-        COALESCE(SUM(cache_read_tokens), 0)       AS cache_read_tokens,
-        COALESCE(SUM(total_tokens), 0)            AS total_tokens
+        strftime(?, timestamp)                 AS time,
+        COALESCE(SUM(input_tokens), 0)         AS input_tokens,
+        COALESCE(SUM(output_tokens), 0)        AS output_tokens,
+        COALESCE(SUM(cache_creation_tokens),0) AS cache_write_tokens,
+        COALESCE(SUM(cache_read_tokens), 0)    AS cache_read_tokens,
+        COALESCE(SUM(total_tokens), 0)         AS total_tokens,
+        COALESCE(SUM(${COST_SQL}), 0)          AS cost
       FROM cc_events
       WHERE ${conditions.join(' AND ')}
       GROUP BY time
@@ -31,21 +44,15 @@ export async function GET(request: Request) {
       params
     );
 
-    const data = rows.map((r) => {
-      const i = Number(r.input_tokens);
-      const o = Number(r.output_tokens);
-      const cw = Number(r.cache_write_tokens);
-      const cr = Number(r.cache_read_tokens);
-      return {
-        time: r.time,
-        input_tokens: i,
-        output_tokens: o,
-        cache_write_tokens: cw,
-        cache_read_tokens: cr,
-        total_tokens: Number(r.total_tokens),
-        cost: calcCost(i, o, cw, cr),
-      };
-    });
+    const data = rows.map((r) => ({
+      time:               r.time,
+      input_tokens:       Number(r.input_tokens),
+      output_tokens:      Number(r.output_tokens),
+      cache_write_tokens: Number(r.cache_write_tokens),
+      cache_read_tokens:  Number(r.cache_read_tokens),
+      total_tokens:       Number(r.total_tokens),
+      cost:               Number(r.cost),
+    }));
 
     return NextResponse.json(data);
   } catch (error) {

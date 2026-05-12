@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import {
   AreaChart,
   Area,
@@ -8,8 +9,6 @@ import {
   Tooltip,
   ResponsiveContainer,
   CartesianGrid,
-  Brush,
-  Legend,
 } from 'recharts';
 import { TokenTimelinePoint } from '@/lib/types';
 import { CHART_COLORS, formatTokens, formatCost, CT, AXIS_TICK, GRID_STROKE } from '@/lib/utils';
@@ -61,64 +60,75 @@ function CustomTooltip({ active, payload, label }: any) {
 }
 
 export function TokenTimeline({ data }: TokenTimelineProps) {
-  const showBrush = data.length > 14;
+  const [hovered, setHovered] = useState<string | null>(null);
 
   return (
-    <ResponsiveContainer width="100%" height={260}>
-      <AreaChart data={data} margin={{ top: 8, right: 4, left: 0, bottom: 0 }}>
-        <defs>
-          {SERIES.map(({ key, color }) => (
-            <linearGradient key={key} id={`tgrad-${key}`} x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor={color} stopOpacity={0.3} />
-              <stop offset="100%" stopColor={color} stopOpacity={0} />
-            </linearGradient>
-          ))}
-        </defs>
-        <CartesianGrid strokeDasharray="3 3" stroke={GRID_STROKE} vertical={false} />
-        <XAxis
-          dataKey="time"
-          tickFormatter={formatTick}
-          tick={AXIS_TICK}
-          axisLine={false}
-          tickLine={false}
-          interval="preserveStartEnd"
-        />
-        <YAxis
-          tickFormatter={(v) => formatTokens(v)}
-          tick={AXIS_TICK}
-          axisLine={false}
-          tickLine={false}
-          width={52}
-        />
-        <Tooltip content={<CustomTooltip />} cursor={{ stroke: 'hsl(var(--border))', strokeWidth: 1 }} />
-        <Legend
-          wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }}
-          formatter={(value) => <span style={{ color: 'hsl(var(--muted-foreground))' }}>{value}</span>}
-        />
-        {SERIES.map(({ key, name, color }) => (
-          <Area
-            key={key}
-            type="monotone"
-            dataKey={key}
-            name={name}
-            stroke={color}
-            fill={`url(#tgrad-${key})`}
-            strokeWidth={2}
-            dot={false}
-            activeDot={{ r: 4, strokeWidth: 0 }}
-          />
-        ))}
-        {showBrush && (
-          <Brush
+    <div className="space-y-3">
+      <ResponsiveContainer width="100%" height={240}>
+        <AreaChart data={data} margin={{ top: 8, right: 4, left: 0, bottom: 0 }}>
+          <defs>
+            {SERIES.map(({ key, color }) => (
+              <linearGradient key={key} id={`tgrad-${key}`} x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor={color} stopOpacity={0.3} />
+                <stop offset="100%" stopColor={color} stopOpacity={0} />
+              </linearGradient>
+            ))}
+          </defs>
+          <CartesianGrid strokeDasharray="3 3" stroke={GRID_STROKE} vertical={false} />
+          <XAxis
             dataKey="time"
-            height={22}
-            stroke="hsl(var(--border))"
-            fill="hsl(var(--card))"
-            travellerWidth={5}
             tickFormatter={formatTick}
+            tick={AXIS_TICK}
+            axisLine={false}
+            tickLine={false}
+            interval="preserveStartEnd"
           />
-        )}
-      </AreaChart>
-    </ResponsiveContainer>
+          <YAxis
+            tickFormatter={(v) => formatTokens(v)}
+            tick={AXIS_TICK}
+            axisLine={false}
+            tickLine={false}
+            width={52}
+          />
+          <Tooltip content={<CustomTooltip />} cursor={{ stroke: 'hsl(var(--border))', strokeWidth: 1 }} />
+          {SERIES.map(({ key, name, color }) => {
+            const dimmed = hovered !== null && hovered !== key;
+            return (
+              <Area
+                key={key}
+                type="monotone"
+                dataKey={key}
+                name={name}
+                stroke={color}
+                strokeOpacity={dimmed ? 0.12 : 1}
+                fill={dimmed ? 'transparent' : `url(#tgrad-${key})`}
+                strokeWidth={hovered === key ? 2.5 : 2}
+                dot={false}
+                activeDot={{ r: 4, strokeWidth: 0 }}
+                connectNulls
+              />
+            );
+          })}
+        </AreaChart>
+      </ResponsiveContainer>
+
+      {/* Legend */}
+      <div className="flex flex-wrap gap-x-4 gap-y-1 px-1">
+        {SERIES.map(({ key, name, color }) => (
+          <span
+            key={key}
+            className="flex items-center gap-1.5 text-[11px] cursor-pointer select-none transition-opacity"
+            style={{ opacity: hovered !== null && hovered !== key ? 0.35 : 1 }}
+            onMouseEnter={() => setHovered(key)}
+            onMouseLeave={() => setHovered(null)}
+          >
+            <span className="h-2 w-2 rounded-full shrink-0" style={{ background: color }} />
+            <span style={{ color: hovered === key ? 'hsl(var(--foreground))' : 'hsl(var(--muted-foreground))' }}>
+              {name}
+            </span>
+          </span>
+        ))}
+      </div>
+    </div>
   );
 }

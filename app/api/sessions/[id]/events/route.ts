@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import pool from '@/lib/db';
-import { RowDataPacket } from 'mysql2';
+import { RowDataPacket } from '@/lib/db';
 
 export async function GET(
   request: NextRequest,
@@ -28,7 +28,8 @@ export async function GET(
         content, tool_name, tool_input, tool_output,
         is_error, error_message, transcript_path,
         input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, total_tokens,
-        JSON_UNQUOTE(JSON_EXTRACT(raw_payload, '$.notification_type')) AS notification_type
+        model,
+        json_extract(raw_payload, '$.notification_type') AS notification_type
       FROM cc_events
       WHERE ${conditions.join(' AND ')}
       ORDER BY id DESC
@@ -36,10 +37,17 @@ export async function GET(
       queryParams
     );
 
+    const parseJson = (v: unknown) => {
+      if (!v || typeof v === 'object') return v ?? null;
+      try { return JSON.parse(String(v)); } catch { return null; }
+    };
+
     // Return in chronological order; caller uses has_more to know if older events exist
     const events = [...rows].reverse().map((e) => ({
       ...e,
       is_error: Boolean(e.is_error),
+      tool_input:  parseJson(e.tool_input),
+      tool_output: parseJson(e.tool_output),
     }));
 
     return NextResponse.json({ events, has_more: rows.length === limit });

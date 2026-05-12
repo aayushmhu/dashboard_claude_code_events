@@ -5,8 +5,16 @@ import { useRouter } from 'next/navigation';
 import { Session, Event } from '@/lib/types';
 import { ConversationThread } from '@/components/conversation-thread';
 import { Skeleton } from '@/components/ui/skeleton';
-import { formatRelativeTime, getProjectName, formatDuration, formatTokens, parseDbDate } from '@/lib/utils';
-import { Search, MessageSquare, RefreshCw, Clock, AlertCircle, Zap, Coins } from 'lucide-react';
+import { formatRelativeTime, formatDuration, formatTokens, parseDbDate } from '@/lib/utils';
+import { Search, MessageSquare, RefreshCw, Clock, AlertCircle, Zap, Coins, Download, ChevronUp, Sparkles } from 'lucide-react';
+
+interface ThinkingRecord {
+  id: number;
+  record_index: number;
+  record_subtype: string;
+  timestamp: string | null;
+  content_text: string | null;
+}
 
 interface ConversationsClientProps {
   sessions: Session[];
@@ -18,33 +26,115 @@ export function ConversationsClient({ sessions: initialSessions, selectedId }: C
   const [search, setSearch] = useState('');
   const [activeId, setActiveId] = useState<string | undefined>(selectedId);
   const [events, setEvents] = useState<Event[]>([]);
+  const [thinkingByEventId, setThinkingByEventId] = useState<Map<number, string>>(new Map());
+  const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [sessions, setSessions] = useState<Session[]>(initialSessions);
   const threadEndRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
   const prevEventCount = useRef(0);
+  const activeIdRef = useRef(activeId);
+  activeIdRef.current = activeId;
+  const eventsRef = useRef(events);
+  eventsRef.current = events;
 
-  const filteredSessions = sessions.filter((s) => {
-    const q = search.toLowerCase();
-    return (
-      s.project_name?.toLowerCase().includes(q) ||
-      s.session_id.toLowerCase().includes(q)
-    );
-  });
+  const filteredSessions = sessions
+    .filter((s) => {
+      const q = search.toLowerCase();
+      return (
+        s.project_name?.toLowerCase().includes(q) ||
+        s.session_id.toLowerCase().includes(q)
+      );
+    })
+    .sort((a, b) => {
+      const now = Date.now();
+      const ta = Math.min(parseDbDate(b.last_seen_at).getTime(), now);
+      const tb = Math.min(parseDbDate(a.last_seen_at).getTime(), now);
+      return ta - tb;
+    });
+
+  const buildThinkingMap = useCallback((evts: Event[], thinkingRecords: ThinkingRecord[]): Map<number, string> => {
+    const map = new Map<number, string>();
+    if (thinkingRecords.length === 0 || evts.length === 0) return map;
+    const stopEvents = evts.filter(e => e.event_type === 'Stop' || e.event_type === 'SubagentStop');
+    for (const tr of thinkingRecords) {
+      if (!tr.content_text || !tr.timestamp) continue;
+      const trTime = parseDbDate(tr.timestamp).getTime();
+      if (isNaN(trTime)) continue;
+      let best: Event | null = null;
+      let bestDiff = Infinity;
+      for (const stop of stopEvents) {
+        const diff = parseDbDate(stop.timestamp).getTime() - trTime;
+        if (diff >= -2000 && diff < 90 * 60 * 1000 && diff < bestDiff) {
+          best = stop;
+          bestDiff = diff;
+        }
+      }
+      if (best) {
+        const existing = map.get(best.id);
+        map.set(best.id, existing ? existing + '\n\n' + tr.content_text : tr.content_text);
+      }
+    }
+    return map;
+  }, []);
 
   const loadEvents = useCallback(async (sessionId: string, isRefresh = false) => {
     if (!isRefresh) setLoading(true);
     try {
-      const res = await fetch(`/api/sessions/${sessionId}/events`);
-      const data = await res.json();
-      const evts = Array.isArray(data) ? data : [];
+      const [evRes, trRes] = await Promise.all([
+        fetch(`/api/sessions/${sessionId}/events?limit=50`),
+        fetch(`/api/sessions/${sessionId}/transcript?types=thinking`).catch(() => null),
+      ]);
+      const data = await evRes.json();
+      const evts: Event[] = data.events ?? [];
+      const trData = trRes ? await trRes.json().catch(() => ({ records: [] })) : { records: [] };
+      const thinkingRecords: ThinkingRecord[] = trData.records ?? [];
       setEvents(evts);
+      setThinkingByEventId(buildThinkingMap(evts, thinkingRecords));
+      setHasMore(data.has_more ?? false);
       return evts.length;
     } catch {
       setEvents([]);
+      setThinkingByEventId(new Map());
+      setHasMore(false);
       return 0;
     } finally {
       if (!isRefresh) setLoading(false);
+    }
+  }, [buildThinkingMap]);
+
+  const loadOlderEvents = useCallback(async () => {
+    const sessionId = activeIdRef.current;
+    const current = eventsRef.current;
+    if (!sessionId || current.length === 0) return;
+
+    setLoadingMore(true);
+    const container = scrollContainerRef.current;
+    const prevScrollHeight = container?.scrollHeight ?? 0;
+    const oldestId = (current[0] as Event & { id: number }).id;
+
+    try {
+      const res = await fetch(`/api/sessions/${sessionId}/events?before_id=${oldestId}&limit=50`);
+      const data = await res.json();
+      const older: Event[] = data.events ?? [];
+      if (older.length === 0) {
+        setHasMore(false);
+        return;
+      }
+      setHasMore(data.has_more ?? false);
+      setEvents((cur) => [...older, ...cur]);
+      // Restore scroll position after DOM updates from prepend
+      requestAnimationFrame(() => {
+        if (container) {
+          container.scrollTop = container.scrollHeight - prevScrollHeight;
+        }
+      });
+    } catch {
+      // silent
+    } finally {
+      setLoadingMore(false);
     }
   }, []);
 
@@ -58,42 +148,88 @@ export function ConversationsClient({ sessions: initialSessions, selectedId }: C
     }
   }, []);
 
-  // Initial load + URL sync
+  // Sync activeId when selectedId prop changes (soft navigation between /conversations/[id] routes)
   useEffect(() => {
-    if (activeId) {
-      loadEvents(activeId).then((count) => {
-        prevEventCount.current = count;
-      });
-      router.replace(`/conversations?session=${activeId}`, { scroll: false });
-    }
-  }, [activeId]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (selectedId !== undefined) setActiveId(selectedId);
+  }, [selectedId]);
 
-  // Scroll to bottom when events first load or new events arrive
+  // Load events when active session changes, then scroll to bottom
   useEffect(() => {
-    if (events.length > 0) {
-      threadEndRef.current?.scrollIntoView({ behavior: events.length !== prevEventCount.current ? 'smooth' : 'instant' });
-      prevEventCount.current = events.length;
+    if (!activeId) return;
+    setEvents([]);
+    setHasMore(false);
+    prevEventCount.current = 0;
+    loadEvents(activeId).then(() => {
+      // Double rAF: first ensures React committed the new events, second ensures layout is done
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          const container = scrollContainerRef.current;
+          if (container) container.scrollTop = container.scrollHeight;
+        });
+      });
+    });
+  }, [activeId, loadEvents]);
+
+  // Scroll to bottom when auto-refresh appends new events and user is near the bottom
+  useEffect(() => {
+    if (events.length === 0 || events.length <= prevEventCount.current) return;
+    if (prevEventCount.current > 0) {
+      const container = scrollContainerRef.current;
+      if (container) {
+        const distFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+        if (distFromBottom < 200) container.scrollTop = container.scrollHeight;
+      }
     }
+    prevEventCount.current = events.length;
   }, [events]);
 
-  // Auto-refresh every 15s
+  // Detect scroll to top → load older events
+  useEffect(() => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+
+    const handleScroll = () => {
+      if (container.scrollTop < 80 && hasMore && !loadingMore) {
+        loadOlderEvents();
+      }
+    };
+
+    container.addEventListener('scroll', handleScroll, { passive: true });
+    return () => container.removeEventListener('scroll', handleScroll);
+  }, [hasMore, loadingMore, loadOlderEvents]);
+
+  // Auto-refresh every 15s — appends only newer events
   useEffect(() => {
     const interval = setInterval(async () => {
+      if (!activeIdRef.current) return;
       setRefreshing(true);
       await Promise.all([
         refreshSessions(),
-        activeId ? loadEvents(activeId, true) : Promise.resolve(),
+        (async () => {
+          try {
+            const res = await fetch(`/api/sessions/${activeIdRef.current}/events?limit=50`);
+            const data = await res.json();
+            const fresh: Event[] = data.events ?? [];
+            setEvents((prev) => {
+              if (fresh.length === 0) return prev;
+              const prevIds = new Set(prev.map((e) => (e as Event & { id: number }).id));
+              const newer = fresh.filter((e) => !prevIds.has((e as Event & { id: number }).id));
+              return newer.length > 0 ? [...prev, ...newer] : prev;
+            });
+          } catch { /* silent */ }
+        })(),
       ]);
       setRefreshing(false);
     }, 15_000);
     return () => clearInterval(interval);
-  }, [activeId, loadEvents, refreshSessions]);
+  }, [refreshSessions]);
 
   const activeSession = sessions.find((s) => s.session_id === activeId);
 
   function isLive(lastSeenAt: string): boolean {
     const d = parseDbDate(lastSeenAt);
-    return !isNaN(d.getTime()) && Date.now() - d.getTime() < 3 * 60 * 1000;
+    const t = d.getTime();
+    return !isNaN(t) && t <= Date.now() && Date.now() - t < 3 * 60 * 1000;
   }
 
   return (
@@ -135,7 +271,7 @@ export function ConversationsClient({ sessions: initialSessions, selectedId }: C
               return (
                 <button
                   key={session.session_id}
-                  onClick={() => setActiveId(session.session_id)}
+                  onClick={() => router.push(`/conversations/${session.session_id}`)}
                   className={`w-full text-left px-3 py-3 transition-all border-b border-border/30 group relative ${
                     isActive
                       ? 'bg-primary/10 border-l-2 border-l-primary'
@@ -143,7 +279,6 @@ export function ConversationsClient({ sessions: initialSessions, selectedId }: C
                   }`}
                 >
                   <div className="flex items-start gap-2.5">
-                    {/* Project icon */}
                     <div className={`mt-0.5 flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold uppercase ${
                       isActive ? 'bg-primary/20 text-primary' : 'bg-muted text-muted-foreground'
                     }`}>
@@ -234,12 +369,31 @@ export function ConversationsClient({ sessions: initialSessions, selectedId }: C
                     </div>
                   </div>
                 </div>
-                {refreshing && <RefreshCw className="h-3.5 w-3.5 text-muted-foreground animate-spin" />}
+                <div className="flex items-center gap-2">
+                  {refreshing && <RefreshCw className="h-3.5 w-3.5 text-muted-foreground animate-spin" />}
+                  <a
+                    href={`/api/sessions/${activeId}/export`}
+                    download
+                    title="Export as self-contained HTML"
+                    className="flex items-center gap-1.5 rounded-lg border border-border bg-card px-2.5 py-1.5 text-xs text-muted-foreground hover:border-primary/40 hover:text-foreground transition-all"
+                  >
+                    <Download className="h-3 w-3" />
+                    Export
+                  </a>
+                  <a
+                    href={`/chat/${activeId}`}
+                    title="Open this session in Chat to ask Claude questions about it"
+                    className="flex items-center gap-1.5 rounded-lg border border-fuchsia-500/30 bg-fuchsia-500/10 px-2.5 py-1.5 text-xs font-medium text-fuchsia-400 hover:border-fuchsia-500/60 hover:bg-fuchsia-500/20 transition-all"
+                  >
+                    <Sparkles className="h-3 w-3" />
+                    Ask Claude
+                  </a>
+                </div>
               </div>
             )}
 
             {/* Scrollable thread */}
-            <div className="flex-1 overflow-y-auto">
+            <div ref={scrollContainerRef} className="flex-1 overflow-y-auto">
               {loading ? (
                 <div className="p-6 space-y-5">
                   {[...Array(6)].map((_, i) => (
@@ -250,7 +404,26 @@ export function ConversationsClient({ sessions: initialSessions, selectedId }: C
                 </div>
               ) : (
                 <>
-                  <ConversationThread events={events} />
+                  {/* Load-older indicator */}
+                  {hasMore && (
+                    <div className="flex justify-center py-3">
+                      {loadingMore ? (
+                        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                          <RefreshCw className="h-3 w-3 animate-spin" />
+                          Loading older events…
+                        </div>
+                      ) : (
+                        <button
+                          onClick={loadOlderEvents}
+                          className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                        >
+                          <ChevronUp className="h-3 w-3" />
+                          Load older events
+                        </button>
+                      )}
+                    </div>
+                  )}
+                  <ConversationThread events={events} thinkingByEventId={thinkingByEventId} />
                   <div ref={threadEndRef} className="h-6" />
                 </>
               )}

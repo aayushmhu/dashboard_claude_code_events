@@ -43,7 +43,7 @@ export function CostBreakdown({ data }: CostBreakdownProps) {
   const chartData = data.slice(0, 10).map((d) => ({ ...d, name: d.project_name }));
 
   return (
-    <ResponsiveContainer width="100%" height={240}>
+    <ResponsiveContainer width="100%" height={Math.max(260, chartData.length * 36)}>
       <BarChart data={chartData} layout="vertical" margin={{ top: 0, right: 16, left: 0, bottom: 0 }}>
         <CartesianGrid strokeDasharray="3 3" stroke={GRID_STROKE} horizontal={false} />
         <XAxis
@@ -59,7 +59,7 @@ export function CostBreakdown({ data }: CostBreakdownProps) {
           tick={{ ...AXIS_TICK, fontSize: 11, fill: 'hsl(var(--foreground))' }}
           axisLine={false}
           tickLine={false}
-          width={110}
+          width={160}
         />
         <Tooltip content={<CustomTooltip />} cursor={{ fill: 'hsl(var(--muted))' }} />
         <Bar dataKey="cost" radius={[0, 6, 6, 0]} maxBarSize={20}>

@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import pool from '@/lib/db';
-import { RowDataPacket } from 'mysql2';
+import { RowDataPacket } from '@/lib/db';
 
 export async function GET() {
   try {

@@ -14,6 +14,7 @@ import {
   File, FileText, FileCode, X, Pencil, FilePlus, FolderPlus,
   Eye, ImageIcon, AtSign, Slash, Paperclip,
   Crown, ShieldCheck, FlaskConical, Server, Layout, Cloud, Database, Lock, PauseCircle,
+  Brain, GitBranch, Shield, ZoomIn,
 } from 'lucide-react';
 import { TOOL_COLORS, BUBBLE_COLORS, ROLE_COLORS, getAgentColor } from '@/lib/colors';
 import { formatCost, formatRelativeTime, formatDuration, formatTokens, truncateId, parseDbDate, formatAgentName, getAgentIconType, detectMessageType, calcCost } from '@/lib/utils';
@@ -23,9 +24,26 @@ import { Session, Event } from '@/lib/types';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
+interface TranscriptRecord {
+  id: number;
+  record_index: number;
+  record_type: string;
+  record_subtype: string;
+  uuid: string | null;
+  parent_uuid: string | null;
+  timestamp: string | null;
+  content_text: string | null;
+  content_image: string | null;   // base64 string for image/document subtypes
+  image_media_type: string | null;
+  model: string | null;
+  permission_mode: string | null;
+  is_sidechain: boolean;
+  is_error: boolean;
+}
+
 interface ChatMessage {
   id: string;
-  role: 'user' | 'assistant' | 'tool' | 'system' | 'permission_denial';
+  role: 'user' | 'assistant' | 'tool' | 'system' | 'permission_denial' | 'permission_change' | 'api_error' | 'compact_boundary';
   content: string;
   timestamp: Date;
   isStreaming?: boolean;
@@ -45,6 +63,15 @@ interface ChatMessage {
   notificationType?: string;
   attachedImages?: string[];   // base64 dataUrls for display
   mentionedFiles?: string[];   // relative paths for display
+  // Transcript-derived enrichment
+  thinkingContent?: string;                                          // thinking block for this turn
+  transcriptImages?: { data: string; mediaType: string }[];         // images from transcript
+  permissionMode?: string;                                          // for permission_change role
+  isHistorical?: boolean;                                           // loaded from DB, not live
+  rejectionReason?: string;                                         // from transcript rejection record
+  permissionOutcome?: 'rejected' | 'mode_changed' | 'instructions_given';
+  permissionModeAfter?: string;                                     // which mode was set (for mode_changed)
+  model?: string;                                                   // model that produced this turn
 }
 
 // ─── Slash commands ───────────────────────────────────────────────────────────
@@ -135,7 +162,179 @@ function getMonacoLang(filename: string): string {
 
 function isLive(lastSeenAt: string): boolean {
   const d = parseDbDate(lastSeenAt);
-  return !isNaN(d.getTime()) && Date.now() - d.getTime() < 3 * 60 * 1000;
+  const t = d.getTime();
+  return !isNaN(t) && t <= Date.now() && Date.now() - t < 3 * 60 * 1000;
+}
+
+// Merges transcript-derived data (thinking, images, permission changes, api errors)
+// into the base messages array produced by eventsToMessages().
+function mergeTranscriptIntoMessages(
+  msgs: ChatMessage[],
+  events: Event[],
+  transcriptRecords: TranscriptRecord[],
+): ChatMessage[] {
+  if (transcriptRecords.length === 0) return msgs;
+
+  // ── 0. Compute loaded-event time window ───────────────────────────────────
+  // Transcript records span the full session; events are paginated.
+  // Only inject records that fall within (or just before) the loaded event range.
+  const eventTimes = msgs.map(m => m.timestamp.getTime()).filter(t => !isNaN(t));
+  const minEventTime = eventTimes.length > 0 ? Math.min(...eventTimes) : -Infinity;
+  const maxEventTime = eventTimes.length > 0 ? Math.max(...eventTimes) : Infinity;
+  // 60-min lead: thinking/compact records fire before the next logged cc_event
+  const LEAD_MS = 60 * 60 * 1000;
+  function withinEventWindow(ts: Date): boolean {
+    const t = ts.getTime();
+    return !isNaN(t) && t >= minEventTime - LEAD_MS && t <= maxEventTime + LEAD_MS;
+  }
+
+  // ── 1. Attach thinking blocks to assistant messages ──────────────────────
+  const thinkingRecords = transcriptRecords.filter(r => r.record_subtype === 'thinking' && r.content_text);
+  if (thinkingRecords.length > 0) {
+    const stopEvents = events.filter(e => e.event_type === 'Stop' || e.event_type === 'SubagentStop');
+    // Match each thinking block to the nearest Stop event after it.
+    // Extended-thinking sessions can think for 30+ minutes before the Stop fires,
+    // so use a 90-minute window. Concatenate multiple thinking blocks per turn.
+    for (const tr of thinkingRecords) {
+      if (!tr.timestamp) continue;
+      const ts = parseDbDate(tr.timestamp);
+      if (!withinEventWindow(ts)) continue;
+      const trTime = ts.getTime();
+      let best: Event | null = null;
+      let bestDiff = Infinity;
+      for (const stop of stopEvents) {
+        const diff = parseDbDate(stop.timestamp).getTime() - trTime;
+        if (diff >= -2000 && diff < 90 * 60 * 1000 && diff < bestDiff) {
+          best = stop;
+          bestDiff = diff;
+        }
+      }
+      if (best) {
+        const msg = msgs.find(m => m.id === String(best!.id));
+        if (msg) {
+          msg.thinkingContent = msg.thinkingContent
+            ? msg.thinkingContent + '\n\n' + (tr.content_text ?? '')
+            : (tr.content_text ?? undefined);
+        }
+      }
+    }
+  }
+
+  // ── 2. Attach transcript images to user messages ──────────────────────────
+  const imageRecords = transcriptRecords.filter(
+    r => (r.record_subtype === 'image' || r.record_subtype === 'document') && r.content_image
+  );
+  if (imageRecords.length > 0) {
+    const userEvents = events.filter(e => e.event_type === 'UserPromptSubmit');
+    for (const ir of imageRecords) {
+      if (!ir.timestamp || !ir.content_image) continue;
+      const irTime = parseDbDate(ir.timestamp).getTime();
+      let best: Event | null = null;
+      let bestDiff = Infinity;
+      for (const ue of userEvents) {
+        const diff = Math.abs(parseDbDate(ue.timestamp).getTime() - irTime);
+        if (diff < 10000 && diff < bestDiff) {
+          best = ue;
+          bestDiff = diff;
+        }
+      }
+      if (best) {
+        const msg = msgs.find(m => m.id === String(best!.id));
+        if (msg) {
+          if (!msg.transcriptImages) msg.transcriptImages = [];
+          msg.transcriptImages.push({ data: ir.content_image, mediaType: ir.image_media_type ?? 'image/png' });
+        }
+      }
+    }
+  }
+
+  // ── 3. Match rejection records to permission_denial messages ─────────────
+  const rejectionRecords = transcriptRecords.filter(r => r.record_subtype === 'rejection' && r.content_text);
+  if (rejectionRecords.length > 0) {
+    const denialMsgs = msgs.filter(m => m.role === 'permission_denial');
+    for (const rr of rejectionRecords) {
+      if (!rr.timestamp) continue;
+      const rrTime = parseDbDate(rr.timestamp).getTime();
+      let best: ChatMessage | null = null;
+      let bestDiff = Infinity;
+      for (const dm of denialMsgs) {
+        const diff = Math.abs(dm.timestamp.getTime() - rrTime);
+        if (diff < 30000 && diff < bestDiff) { best = dm; bestDiff = diff; }
+      }
+      if (best && !best.rejectionReason) {
+        best.rejectionReason = rr.content_text ?? undefined;
+      }
+    }
+  }
+
+  // ── 4. Inject permission mode changes, api errors, compact boundaries ────
+  // withinEventWindow() defined in step 0 filters to the loaded event range.
+  const permRecords = transcriptRecords.filter(r => r.record_type === 'permission-mode' && r.permission_mode);
+  const apiErrRecords = transcriptRecords.filter(r => r.record_subtype === 'api_error');
+  const injected: ChatMessage[] = [];
+
+  for (const pr of permRecords) {
+    if (!pr.timestamp) continue;
+    const ts = parseDbDate(pr.timestamp);
+    if (!withinEventWindow(ts)) continue;
+    injected.push({
+      id: `perm-${pr.id}`,
+      role: 'permission_change',
+      content: pr.permission_mode ?? '',
+      permissionMode: pr.permission_mode ?? undefined,
+      timestamp: ts,
+    });
+  }
+  for (const ae of apiErrRecords) {
+    if (!ae.timestamp) continue;
+    const ts = parseDbDate(ae.timestamp);
+    if (!withinEventWindow(ts)) continue;
+    injected.push({
+      id: `apierr-${ae.id}`,
+      role: 'api_error',
+      content: ae.content_text ?? 'API error',
+      timestamp: ts,
+    });
+  }
+
+  const compactRecords = transcriptRecords.filter(r => r.record_subtype === 'compact_boundary');
+  for (const cr of compactRecords) {
+    if (!cr.timestamp) continue;
+    const ts = parseDbDate(cr.timestamp);
+    if (!withinEventWindow(ts)) continue;
+    injected.push({
+      id: `compact-${cr.id}`,
+      role: 'compact_boundary',
+      content: cr.content_text ?? '',
+      timestamp: ts,
+    });
+  }
+
+  const sorted = injected.length === 0
+    ? msgs
+    : [...msgs, ...injected].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+
+  // Post-process: determine what the user did after each permission request
+  for (let i = 0; i < sorted.length; i++) {
+    const m = sorted[i];
+    if (m.role !== 'permission_denial') continue;
+    if (m.rejectionReason) { m.permissionOutcome = 'rejected'; continue; }
+    for (let j = i + 1; j < sorted.length; j++) {
+      const next = sorted[j];
+      if (next.timestamp.getTime() - m.timestamp.getTime() > 60_000) break;
+      if (next.role === 'permission_change') {
+        m.permissionOutcome = 'mode_changed';
+        m.permissionModeAfter = next.permissionMode;
+        break;
+      }
+      if (next.role === 'user' && next.isHistorical && next.content?.trim()) {
+        m.permissionOutcome = 'instructions_given';
+        break;
+      }
+    }
+  }
+
+  return sorted;
 }
 
 function eventsToMessages(events: Event[]): ChatMessage[] {
@@ -145,11 +344,12 @@ function eventsToMessages(events: Event[]): ChatMessage[] {
     const ev = events[i];
     if (skipIds.has(ev.id)) continue;
     if (ev.event_type === 'UserPromptSubmit') {
-      msgs.push({ id: String(ev.id), role: 'user', content: ev.content || '', timestamp: new Date(ev.timestamp) });
+      msgs.push({ id: String(ev.id), role: 'user', content: ev.content || '', timestamp: parseDbDate(ev.timestamp), isHistorical: true });
     } else if (ev.event_type === 'Stop' || ev.event_type === 'SubagentStop') {
       msgs.push({
         id: String(ev.id), role: 'assistant', content: ev.content || '',
-        timestamp: new Date(ev.timestamp),
+        timestamp: parseDbDate(ev.timestamp),
+        isHistorical: true,
         agentType: ev.event_type === 'SubagentStop'
           ? ((ev.raw_payload as Record<string, unknown>)?.agent_type as string) || 'subagent'
           : undefined,
@@ -159,6 +359,7 @@ function eventsToMessages(events: Event[]): ChatMessage[] {
         cacheCreationTokens: ev.cache_creation_tokens ?? undefined,
         cacheReadTokens: ev.cache_read_tokens ?? undefined,
         totalTokens: ev.total_tokens ?? undefined,
+        model: ev.model ?? undefined,
       });
     } else if (ev.event_type === 'PreToolUse') {
       const post = events.slice(i + 1).find(e => e.event_type === 'PostToolUse' && e.tool_name === ev.tool_name);
@@ -170,41 +371,24 @@ function eventsToMessages(events: Event[]): ChatMessage[] {
           toolInput: ev.tool_input ?? undefined,
           toolOutput: post.tool_output ?? null,
           toolIsError: post.is_error ?? false,
-          timestamp: new Date(ev.timestamp),
+          timestamp: parseDbDate(ev.timestamp),
+          isHistorical: true,
         });
       } else {
-        // No PostToolUse — permission was denied or tool was blocked
         msgs.push({
           id: String(ev.id), role: 'permission_denial', content: '',
           toolName: ev.tool_name || 'Unknown',
           toolInput: ev.tool_input ?? undefined,
           permissionDenial: { tool_name: ev.tool_name || 'Unknown', tool_input: (ev.tool_input ?? {}) as Record<string, unknown> },
-          timestamp: new Date(ev.timestamp),
+          timestamp: parseDbDate(ev.timestamp),
+          isHistorical: true,
         });
       }
     } else if (ev.event_type === 'Notification') {
-      msgs.push({ id: String(ev.id), role: 'system', content: ev.content || '', timestamp: new Date(ev.timestamp), notificationType: ev.notification_type ?? undefined });
+      msgs.push({ id: String(ev.id), role: 'system', content: ev.content || '', timestamp: parseDbDate(ev.timestamp), notificationType: ev.notification_type ?? undefined, isHistorical: true });
     }
   }
   return msgs;
-}
-
-// ─── Image persistence helpers (localStorage) ─────────────────────────────────
-
-function saveSessionImages(sessionId: string, userMsgIdx: number, images: string[]) {
-  if (!images.length) return;
-  try {
-    const key = `chat_imgs_${sessionId}`;
-    const map: Record<string, string[]> = JSON.parse(localStorage.getItem(key) || '{}');
-    map[String(userMsgIdx)] = images;
-    localStorage.setItem(key, JSON.stringify(map));
-  } catch { /* quota exceeded — silently skip */ }
-}
-
-function loadSessionImages(sessionId: string): Record<string, string[]> {
-  try {
-    return JSON.parse(localStorage.getItem(`chat_imgs_${sessionId}`) || '{}');
-  } catch { return {}; }
 }
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
@@ -269,27 +453,82 @@ function ChatToolCard({ msg }: { msg: ChatMessage }) {
   );
 }
 
-function PermissionDenialCard({ msg, onRetry }: { msg: ChatMessage; onRetry?: (mode: 'acceptEdits' | 'dangerouslySkipPermissions') => void }) {
+type RetryMode = 'default' | 'acceptEdits' | 'dangerouslySkipPermissions';
+
+function PermissionDenialCard({ msg, onRetry }: { msg: ChatMessage; onRetry?: (mode: RetryMode) => void }) {
   const d = msg.permissionDenial;
   const [expanded, setExpanded] = useState(false);
-  // Find the most descriptive input field: command, path, description, or first value
   const primaryInput = d?.tool_input
     ? (d.tool_input.command ?? d.tool_input.path ?? d.tool_input.description ?? Object.values(d.tool_input)[0])
     : null;
   const inputStr = primaryInput != null ? String(primaryInput) : null;
+  const isHistorical = msg.isHistorical;
+
+  // Determine outcome label + colors
+  let outcomeLabel: string;
+  let outcomeColor: string;
+  let outcomeBg: string;
+  let outcomeBorder: string;
+
+  if (!isHistorical) {
+    outcomeLabel = 'Permission requested';
+    outcomeColor = '#F59E0B';
+    outcomeBg = 'rgba(245,158,11,0.08)';
+    outcomeBorder = 'rgba(245,158,11,0.25)';
+  } else {
+    switch (msg.permissionOutcome) {
+      case 'rejected':
+        outcomeLabel = 'Rejected by user';
+        outcomeColor = '#EF4444';
+        outcomeBg = 'rgba(239,68,68,0.08)';
+        outcomeBorder = 'rgba(239,68,68,0.25)';
+        break;
+      case 'mode_changed': {
+        const modeStr = msg.permissionModeAfter === 'acceptEdits' ? 'Accept Edits'
+          : msg.permissionModeAfter === 'dangerouslySkipPermissions' ? 'Skip All Permissions'
+          : msg.permissionModeAfter ?? 'changed';
+        outcomeLabel = `Mode changed → ${modeStr}`;
+        outcomeColor = '#818CF8';
+        outcomeBg = 'rgba(129,140,248,0.08)';
+        outcomeBorder = 'rgba(129,140,248,0.25)';
+        break;
+      }
+      case 'instructions_given':
+        outcomeLabel = 'User gave instructions instead';
+        outcomeColor = '#60A5FA';
+        outcomeBg = 'rgba(96,165,250,0.08)';
+        outcomeBorder = 'rgba(96,165,250,0.25)';
+        break;
+      default:
+        outcomeLabel = 'Permission requested';
+        outcomeColor = '#F59E0B';
+        outcomeBg = 'rgba(245,158,11,0.08)';
+        outcomeBorder = 'rgba(245,158,11,0.25)';
+    }
+  }
 
   return (
-    <div className="rounded-lg p-3 text-sm flex items-start gap-2" style={{ background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.25)' }}>
-      <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" style={{ color: '#F59E0B' }} />
+    <div className="rounded-lg p-3 text-sm flex items-start gap-2"
+      style={{ background: outcomeBg, border: `1px solid ${outcomeBorder}` }}>
+      <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" style={{ color: outcomeColor }} />
       <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2">
-          <p className="text-xs font-medium" style={{ color: '#F59E0B' }}>
-            {onRetry ? 'Permission Denied' : 'Permission Requested'}
+        <div className="flex items-center gap-2 flex-wrap">
+          <p className="text-xs font-medium" style={{ color: outcomeColor }}>
+            {outcomeLabel}
           </p>
-          <span className="text-xs font-mono px-1.5 py-0.5 rounded" style={{ background: 'rgba(245,158,11,0.15)', color: '#F59E0B' }}>
+          <span className="text-xs font-mono px-1.5 py-0.5 rounded" style={{ background: `${outcomeColor}22`, color: outcomeColor }}>
             {d?.tool_name}
           </span>
         </div>
+
+        {/* Show the rejection message for historical sessions */}
+        {isHistorical && msg.rejectionReason && (
+          <p className="mt-1 text-[11px] text-muted-foreground/70 italic">
+            {msg.rejectionReason.replace(/^The user doesn't want to proceed with this tool use\.\s*/i, '').slice(0, 200) || msg.rejectionReason.slice(0, 200)}
+          </p>
+        )}
+
+        {/* Collapsible input preview */}
         {inputStr && (
           <div className="mt-1.5">
             <button
@@ -306,21 +545,30 @@ function PermissionDenialCard({ msg, onRetry }: { msg: ChatMessage; onRetry?: (m
             )}
           </div>
         )}
+
+        {/* Permission retry options — show whenever onRetry is available */}
         {onRetry && (
-          <div className="flex items-center gap-2 mt-2.5">
+          <div className="flex items-center gap-2 mt-2.5 flex-wrap">
+            <button
+              onClick={() => onRetry('default')}
+              className="text-[11px] px-2.5 py-1 rounded-md font-medium transition-all hover:opacity-80 active:scale-95"
+              style={{ background: 'rgba(52,211,153,0.12)', color: '#34D399', border: '1px solid rgba(52,211,153,0.35)' }}
+            >
+              Yes, allow once
+            </button>
             <button
               onClick={() => onRetry('acceptEdits')}
               className="text-[11px] px-2.5 py-1 rounded-md font-medium transition-all hover:opacity-80 active:scale-95"
-              style={{ background: 'rgba(245,158,11,0.18)', color: '#F59E0B', border: '1px solid rgba(245,158,11,0.40)' }}
+              style={{ background: 'rgba(245,158,11,0.12)', color: '#F59E0B', border: '1px solid rgba(245,158,11,0.35)' }}
             >
-              Allow File Edits
+              Allow file edits
             </button>
             <button
               onClick={() => onRetry('dangerouslySkipPermissions')}
               className="text-[11px] px-2.5 py-1 rounded-md font-medium transition-all hover:opacity-80 active:scale-95"
               style={{ background: 'rgba(239,68,68,0.12)', color: '#EF4444', border: '1px solid rgba(239,68,68,0.35)' }}
             >
-              Allow All ⚠
+              Allow all ⚠
             </button>
           </div>
         )}
@@ -329,43 +577,180 @@ function PermissionDenialCard({ msg, onRetry }: { msg: ChatMessage; onRetry?: (m
   );
 }
 
-const MessageBubble = memo(function MessageBubble({ msg, onRetry }: { msg: ChatMessage; onRetry?: (mode: 'acceptEdits' | 'dangerouslySkipPermissions') => void }) {
+// ─── Thinking panel ───────────────────────────────────────────────────────────
+
+function ThinkingPanel({ content }: { content: string }) {
+  const [open, setOpen] = useState(false);
+  const lines = content.split('\n');
+  const preview = lines.slice(0, 5).join('\n');
+  const hasMore = lines.length > 5;
+
+  return (
+    <div className="mt-2 rounded-xl overflow-hidden" style={{ background: 'rgba(139,92,246,0.07)', border: '1px solid rgba(139,92,246,0.18)' }}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center gap-2 px-3 py-2 text-left"
+      >
+        <Brain className="h-3.5 w-3.5 shrink-0" style={{ color: '#A78BFA' }} />
+        <span className="text-[11px] font-medium" style={{ color: '#A78BFA' }}>Claude&apos;s reasoning</span>
+        <span className="ml-auto">
+          {open
+            ? <ChevronDown className="h-3 w-3" style={{ color: '#A78BFA' }} />
+            : <ChevronRight className="h-3 w-3" style={{ color: '#A78BFA' }} />}
+        </span>
+      </button>
+      {open && (
+        <div className="px-3 pb-3">
+          <pre className="text-[11px] text-muted-foreground/80 whitespace-pre-wrap break-words leading-relaxed font-mono italic overflow-y-auto"
+            style={{ maxHeight: 320 }}>
+            {content}
+          </pre>
+        </div>
+      )}
+      {!open && hasMore && (
+        <div className="px-3 pb-2">
+          <pre className="text-[11px] text-muted-foreground/60 whitespace-pre-wrap break-words font-mono italic">{preview}</pre>
+          <span className="text-[10px]" style={{ color: '#A78BFA' }}>…click to expand</span>
+        </div>
+      )}
+      {!open && !hasMore && (
+        <div className="px-3 pb-2">
+          <pre className="text-[11px] text-muted-foreground/60 whitespace-pre-wrap break-words font-mono italic">{content}</pre>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Image lightbox ───────────────────────────────────────────────────────────
+
+function ImageLightbox({ src, mediaType, onClose }: { src: string; mediaType: string; onClose: () => void }) {
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [onClose]);
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80" onClick={onClose}>
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={`data:${mediaType};base64,${src}`}
+        alt="attachment"
+        className="max-w-[90vw] max-h-[90vh] rounded-xl object-contain shadow-2xl"
+        onClick={e => e.stopPropagation()}
+      />
+      <button className="absolute top-4 right-4 text-white/70 hover:text-white" onClick={onClose}>
+        <X className="h-6 w-6" />
+      </button>
+    </div>
+  );
+}
+
+function ApiErrorCard({ content }: { content: string }) {
+  const [expanded, setExpanded] = useState(false);
+
+  let parsed: Record<string, unknown> | null = null;
+  try { parsed = JSON.parse(content); } catch { /* raw string fallback */ }
+
+  const cause = parsed?.cause as Record<string, unknown> | undefined;
+  const code    = (cause?.code    as string | undefined) ?? 'API Error';
+  const path    = (cause?.path    as string | undefined) ?? null;
+  const message = (cause?.message as string | undefined) ?? null;
+
+  return (
+    <div className="flex justify-center my-2 px-4">
+      <div className="rounded-lg text-xs max-w-xl w-full"
+        style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)', color: '#EF4444' }}>
+        <button
+          onClick={() => setExpanded(e => !e)}
+          className="flex items-center gap-2 w-full px-3 py-2 text-left"
+        >
+          <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+          <span className="font-medium shrink-0">{code}</span>
+          {path && <span className="text-[11px] opacity-55 truncate">{path}</span>}
+          {expanded
+            ? <ChevronDown className="h-3 w-3 ml-auto shrink-0 opacity-60" />
+            : <ChevronRight className="h-3 w-3 ml-auto shrink-0 opacity-60" />}
+        </button>
+        {expanded && (
+          <div className="px-3 pb-3 border-t" style={{ borderColor: 'rgba(239,68,68,0.20)' }}>
+            {path && (
+              <p className="mt-2 text-[11px] text-muted-foreground break-all">
+                <span className="font-semibold" style={{ color: '#EF4444' }}>Path: </span>{path}
+              </p>
+            )}
+            {message && (
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                <span className="font-semibold" style={{ color: '#EF4444' }}>Message: </span>{message}
+              </p>
+            )}
+            <pre className="mt-2 text-[11px] font-mono text-muted-foreground/80 bg-black/20 rounded p-2 overflow-x-auto whitespace-pre-wrap break-all">
+              {parsed ? JSON.stringify(parsed, null, 2) : content}
+            </pre>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+const MessageBubble = memo(function MessageBubble({ msg, onRetry }: { msg: ChatMessage; onRetry?: (mode: RetryMode) => void }) {
+  const [lightbox, setLightbox] = useState<{ data: string; mediaType: string } | null>(null);
+
   if (msg.role === 'user') {
     const msgType = detectMessageType(msg.content);
     if (msgType === 'task-notification') return <TaskNotificationCard content={msg.content} />;
     if (msgType === 'agent-report')      return <AgentReportCard      content={msg.content} />;
     if (msgType === 'agent-message')     return <AgentMessageCard     content={msg.content} />;
+    const allImages: { src: string; isTranscript?: boolean; mediaType?: string }[] = [
+      ...(msg.attachedImages ?? []).map(src => ({ src })),
+      ...(msg.transcriptImages ?? []).map(img => ({ src: img.data, isTranscript: true, mediaType: img.mediaType })),
+    ];
     return (
-      <div className="flex flex-col items-end gap-1.5 my-4 px-4">
-        <div className="flex items-center gap-2">
-          <span className="text-[11px] text-muted-foreground/70">{formatRelativeTime(msg.timestamp.toISOString())}</span>
-          <div className="flex items-center gap-1 text-xs font-medium" style={{ color: ROLE_COLORS.user }}>
-            <User className="h-3 w-3" /><span>You</span>
-          </div>
-        </div>
-        <div className="max-w-[78%] space-y-2">
-          {/* Attached images */}
-          {(msg.attachedImages?.length ?? 0) > 0 && (
-            <div className="flex flex-wrap gap-2 justify-end">
-              {msg.attachedImages!.map((src, i) => (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img key={i} src={src} alt="attachment" className="h-24 max-w-[200px] object-cover rounded-xl border border-border/50" />
-              ))}
+      <>
+        {lightbox && <ImageLightbox src={lightbox.data} mediaType={lightbox.mediaType} onClose={() => setLightbox(null)} />}
+        <div className="flex flex-col items-end gap-1.5 my-4 px-4">
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] text-muted-foreground/70">{formatRelativeTime(msg.timestamp.toISOString())}</span>
+            <div className="flex items-center gap-1 text-xs font-medium" style={{ color: ROLE_COLORS.user }}>
+              <User className="h-3 w-3" /><span>You</span>
             </div>
-          )}
-          <div className="rounded-2xl rounded-tr-md px-4 py-3 text-sm text-foreground whitespace-pre-wrap"
-            style={{ background: BUBBLE_COLORS.user.bg, border: `1px solid ${BUBBLE_COLORS.user.border}` }}>
-            {msg.content.split(/(@\S+)/g).map((part, i) =>
-              part.match(/^@\S+$/) ? (
-                <span key={i} className="inline-flex items-center gap-0.5 font-mono text-[11px] px-1 py-0.5 rounded align-middle"
-                  style={{ background: 'rgba(59,130,246,0.15)', color: '#93C5FD' }}>
-                  <File className="h-2.5 w-2.5" />{part}
-                </span>
-              ) : <span key={i}>{part}</span>
+          </div>
+          <div className="max-w-[78%] space-y-2">
+            {/* Attached images (live chat + transcript) */}
+            {allImages.length > 0 && (
+              <div className="flex flex-wrap gap-2 justify-end">
+                {allImages.map((img, i) => (
+                  <div key={i} className="relative group cursor-pointer" onClick={() => img.isTranscript && img.mediaType ? setLightbox({ data: img.src, mediaType: img.mediaType }) : undefined}>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={img.isTranscript ? `data:${img.mediaType};base64,${img.src}` : img.src}
+                      alt="attachment"
+                      className="h-24 max-w-[200px] object-cover rounded-xl border border-border/50"
+                    />
+                    {img.isTranscript && (
+                      <div className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity rounded-xl">
+                        <ZoomIn className="h-5 w-5 text-white" />
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
             )}
+            <div className="rounded-2xl rounded-tr-md px-4 py-3 text-sm text-foreground whitespace-pre-wrap"
+              style={{ background: BUBBLE_COLORS.user.bg, border: `1px solid ${BUBBLE_COLORS.user.border}` }}>
+              {msg.content.split(/(@\S+)/g).map((part, i) =>
+                part.match(/^@\S+$/) ? (
+                  <span key={i} className="inline-flex items-center gap-0.5 font-mono text-[11px] px-1 py-0.5 rounded align-middle"
+                    style={{ background: 'rgba(59,130,246,0.15)', color: '#93C5FD' }}>
+                    <File className="h-2.5 w-2.5" />{part}
+                  </span>
+                ) : <span key={i}>{part}</span>
+              )}
+            </div>
           </div>
         </div>
-      </div>
+      </>
     );
   }
 
@@ -395,23 +780,27 @@ const MessageBubble = memo(function MessageBubble({ msg, onRetry }: { msg: ChatM
                 agent
               </span>
             )}
+            {msg.thinkingContent && <Brain className="h-3 w-3" style={{ color: '#A78BFA' }} aria-label="Contains reasoning" />}
           </div>
           <span className="text-[11px] text-muted-foreground/70">{formatRelativeTime(msg.timestamp.toISOString())}</span>
         </div>
-        <div
-          className="max-w-[82%] min-w-0 overflow-hidden rounded-2xl rounded-tl-md px-4 py-3 text-sm"
-          style={{
-            background: agentColor ? agentColor.bg : BUBBLE_COLORS.assistant.bg,
-            border: `1px solid ${agentColor ? agentColor.border : BUBBLE_COLORS.assistant.border}`,
-            ...(isAgent ? { borderLeft: `3px solid ${agentColor!.text}` } : {}),
-          }}
-        >
-          {msg.isStreaming && !msg.content
-            ? <span className="text-muted-foreground animate-pulse text-xs">Thinking…</span>
-            : <div className="prose prose-sm dark:prose-invert max-w-none prose-p:leading-relaxed prose-p:my-1 prose-pre:my-2 prose-headings:my-2 prose-pre:overflow-x-auto prose-code:break-words">
-                <ReactMarkdown>{msg.content}</ReactMarkdown>
-              </div>
-          }
+        <div className="max-w-[82%] min-w-0 w-full">
+          {msg.thinkingContent && <ThinkingPanel content={msg.thinkingContent} />}
+          <div
+            className="min-w-0 overflow-hidden rounded-2xl rounded-tl-md px-4 py-3 text-sm mt-1"
+            style={{
+              background: agentColor ? agentColor.bg : BUBBLE_COLORS.assistant.bg,
+              border: `1px solid ${agentColor ? agentColor.border : BUBBLE_COLORS.assistant.border}`,
+              ...(isAgent ? { borderLeft: `3px solid ${agentColor!.text}` } : {}),
+            }}
+          >
+            {msg.isStreaming && !msg.content
+              ? <span className="text-muted-foreground animate-pulse text-xs">Thinking…</span>
+              : <div className="prose prose-sm dark:prose-invert max-w-none prose-p:leading-relaxed prose-p:my-1 prose-pre:my-2 prose-headings:my-2 prose-pre:overflow-x-auto prose-code:break-words">
+                  <ReactMarkdown>{msg.content}</ReactMarkdown>
+                </div>
+            }
+          </div>
         </div>
         {(msg.inputTokens || msg.outputTokens || msg.totalTokens) && (
           <div className="flex items-center gap-2.5 px-1 text-[10px] text-muted-foreground/50">
@@ -419,6 +808,11 @@ const MessageBubble = memo(function MessageBubble({ msg, onRetry }: { msg: ChatM
             {msg.inputTokens != null && <span>↑{formatTokens(msg.inputTokens)} in</span>}
             {msg.outputTokens != null && <span>↓{formatTokens(msg.outputTokens)} out</span>}
             {msg.cacheReadTokens != null && msg.cacheReadTokens > 0 && <span>{formatTokens(msg.cacheReadTokens)} cached</span>}
+            {(msg.inputTokens != null || msg.outputTokens != null) && (
+              <span className="ml-auto font-mono" style={{ color: 'rgba(52,211,153,0.70)' }}>
+                {formatCost(calcCost(msg.inputTokens ?? 0, msg.outputTokens ?? 0, msg.cacheCreationTokens ?? 0, msg.cacheReadTokens ?? 0, msg.model))}
+              </span>
+            )}
           </div>
         )}
       </div>
@@ -426,7 +820,46 @@ const MessageBubble = memo(function MessageBubble({ msg, onRetry }: { msg: ChatM
   }
 
   if (msg.role === 'tool') return <div className="my-2 px-4"><div className="max-w-[88%]"><ChatToolCard msg={msg} /></div></div>;
+
   if (msg.role === 'permission_denial') return <div className="my-2 px-4"><PermissionDenialCard msg={msg} onRetry={onRetry} /></div>;
+
+  if (msg.role === 'permission_change') {
+    const mode = msg.permissionMode ?? msg.content;
+    const modeColor = mode === 'dangerouslySkipPermissions' ? '#EF4444' : mode === 'acceptEdits' ? '#F59E0B' : '#60A5FA';
+    const modeLabel = mode === 'dangerouslySkipPermissions' ? 'Allow All (Dangerous)' : mode === 'acceptEdits' ? 'Allow File Edits' : mode ?? 'Default';
+    return (
+      <div className="flex justify-center my-3">
+        <div className="flex items-center gap-1.5 text-xs rounded-full px-3 py-1.5"
+          style={{ background: `${modeColor}18`, border: `1px solid ${modeColor}40`, color: modeColor }}>
+          <Shield className="h-3 w-3" />
+          <span>Permission mode → {modeLabel}</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (msg.role === 'api_error') return <ApiErrorCard content={msg.content} />;
+
+  if (msg.role === 'compact_boundary') {
+    let tokensFreed: string | null = null;
+    if (msg.content) {
+      try {
+        const meta = JSON.parse(msg.content) as { preTokens?: number; postTokens?: number };
+        if (meta.preTokens != null && meta.postTokens != null) {
+          tokensFreed = formatTokens(meta.preTokens - meta.postTokens);
+        }
+      } catch { /* old records have no JSON content */ }
+    }
+    return (
+      <div className="flex items-center gap-3 my-4 px-4">
+        <div className="flex-1 h-px" style={{ background: 'rgba(139,92,246,0.20)' }} />
+        <span className="text-[10px] font-medium whitespace-nowrap" style={{ color: 'rgba(139,92,246,0.60)' }}>
+          conversation compacted{tokensFreed ? ` · ${tokensFreed} tokens freed` : ''} · {formatRelativeTime(msg.timestamp.toISOString())}
+        </span>
+        <div className="flex-1 h-px" style={{ background: 'rgba(139,92,246,0.20)' }} />
+      </div>
+    );
+  }
 
   if (msg.role === 'system') {
     const isPermission = msg.notificationType === 'permission_prompt';
@@ -564,6 +997,7 @@ export function ChatClient({
 
   // Settings
   const [showSettings, setShowSettings] = useState(false);
+  const [mobileExplorerOpen, setMobileExplorerOpen] = useState(false);
   const [selectedDirectory, setSelectedDirectory] = useState('');
   const [showCustomInput, setShowCustomInput] = useState(false);
   const [customDir, setCustomDir] = useState('');
@@ -604,7 +1038,6 @@ export function ChatClient({
   const atPositionRef = useRef<number | null>(null);
   const fileSearchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastUserMsgRef = useRef<{ text: string; imgs: Array<{ dataUrl: string; mimeType: string }>; files: Array<{ path: string; relPath: string }> } | null>(null);
-  const pendingImagesRef = useRef<Record<number, string[]>>({});
 
   const effectiveDir = showCustomInput ? customDir : selectedDirectory;
   const activeSession = sessions.find(s => s.session_id === currentSessionId);
@@ -745,6 +1178,7 @@ export function ChatClient({
     setIsStreaming(false);
     setShowProjectPicker(false);
     setLoadingSession(true);
+    setMobileExplorerOpen(false);
 
     // Sync URL
     router.push(`/chat/${sessionId}`, { scroll: false });
@@ -753,10 +1187,16 @@ export function ChatClient({
     setHasMoreEvents(false);
 
     try {
-      const res = await fetch(`/api/sessions/${sessionId}/events?limit=50`);
-      const data = await res.json();
+      const [evRes, trRes] = await Promise.all([
+        fetch(`/api/sessions/${sessionId}/events?limit=50`),
+        fetch(`/api/sessions/${sessionId}/transcript?types=thinking,image,document,rejection,permission-mode,api_error,compact_boundary`).catch(() => null),
+      ]);
+      const data = await evRes.json();
       const events: Event[] = Array.isArray(data) ? data : (data.events ?? []);
-      setMessages(eventsToMessages(events));
+      const trData = trRes ? await trRes.json().catch(() => ({ records: [] })) : { records: [] };
+      const transcriptRecords: TranscriptRecord[] = trData.records ?? [];
+
+      setMessages(mergeTranscriptIntoMessages(eventsToMessages(events), events, transcriptRecords));
       setHasMoreEvents(data.has_more ?? false);
       if (events.length > 0) oldestEventIdRef.current = events[0].id;
 
@@ -781,7 +1221,24 @@ export function ChatClient({
       const older: Event[] = data.events ?? [];
       if (older.length > 0) {
         oldestEventIdRef.current = older[0].id;
-        setMessages(prev => [...eventsToMessages(older), ...prev]);
+        setMessages(prev => {
+          const olderMsgs = eventsToMessages(older);
+          // Fix cross-boundary pairing: a PreToolUse at the end of this older batch
+          // may have its PostToolUse already loaded as a tool card in prev.
+          // Match by tool name within a 60s window and upgrade to a proper tool card.
+          const fixed = olderMsgs.map(m => {
+            if (m.role !== 'permission_denial' || !m.toolName) return m;
+            const match = prev.find(p =>
+              p.role === 'tool' &&
+              p.toolName === m.toolName &&
+              p.timestamp.getTime() > m.timestamp.getTime() &&
+              p.timestamp.getTime() - m.timestamp.getTime() < 60000
+            );
+            if (match) return { ...m, role: 'tool' as const, toolOutput: match.toolOutput, toolIsError: match.toolIsError };
+            return m;
+          });
+          return [...fixed, ...prev];
+        });
       } else {
         isPrependingRef.current = false;
       }
@@ -1053,17 +1510,6 @@ export function ChatClient({
     if (!text.trim() || !dir || isStreaming) return;
     lastUserMsgRef.current = { text, imgs, files };
 
-    // Persist image URLs so they survive page reload
-    const imageUrls = imgs.map(i => i.dataUrl);
-    if (imageUrls.length > 0) {
-      const userMsgIdx = messages.filter(m => m.role === 'user').length;
-      if (currentSessionId) {
-        saveSessionImages(currentSessionId, userMsgIdx, imageUrls);
-      } else {
-        pendingImagesRef.current[userMsgIdx] = imageUrls;
-      }
-    }
-
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
     setIsStreaming(true);
 
@@ -1140,11 +1586,6 @@ export function ChatClient({
                 if (ev.session_id) {
                   setCurrentSessionId(ev.session_id);
                   router.push(`/chat/${ev.session_id}`, { scroll: false });
-                  const pending = pendingImagesRef.current;
-                  Object.entries(pending).forEach(([idx, images]) => {
-                    saveSessionImages(ev.session_id!, Number(idx), images);
-                  });
-                  pendingImagesRef.current = {};
                 }
                 if (ev.slash_commands?.length) {
                   const knownNames = new Set(SLASH_COMMANDS.map(c => c.name));
@@ -1263,8 +1704,8 @@ export function ChatClient({
     sendMessageCore(text, imgs, files);
   };
 
-  // Retry last user message with an elevated permission mode
-  const retryWithPermission = useCallback((mode: 'acceptEdits' | 'dangerouslySkipPermissions') => {
+  // Retry last user message with a different permission mode
+  const retryWithPermission = useCallback((mode: RetryMode) => {
     const last = lastUserMsgRef.current;
     if (!last || isStreaming) return;
     sendMessageCore(last.text, last.imgs, last.files, mode);
@@ -1463,9 +1904,24 @@ export function ChatClient({
 
   return (
     <>
-    <div className="flex h-full">
+    <div className="flex h-full relative">
+      {/* Mobile explorer backdrop */}
+      {mobileExplorerOpen && (
+        <div
+          className="fixed inset-0 z-30 bg-black/50 md:hidden"
+          onClick={() => setMobileExplorerOpen(false)}
+        />
+      )}
+
       {/* ── Left panel: VS Code-style file explorer ── */}
-      <aside className="w-[240px] shrink-0 border-r border-border/60 flex flex-col bg-card/30 select-none">
+      <aside className={[
+        'shrink-0 border-r border-border/60 flex flex-col bg-card/30 select-none',
+        // Mobile: fixed overlay
+        'fixed inset-y-0 left-0 z-40 md:relative md:inset-auto md:z-auto',
+        'transition-transform duration-300',
+        mobileExplorerOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0',
+        'w-[240px]',
+      ].join(' ')}>
         {/* Header: project name + actions */}
         <div className="px-3 py-2.5 border-b border-border/60 flex items-center gap-2 min-w-0">
           <FolderOpen className="h-3.5 w-3.5 text-amber-400 shrink-0" />
@@ -1730,6 +2186,14 @@ export function ChatClient({
         {/* Session header */}
         {currentSessionId && (
           <div className="px-4 py-2.5 border-b border-border/60 flex items-center gap-3 bg-card/20 shrink-0">
+            {/* Mobile explorer toggle */}
+            <button
+              onClick={() => setMobileExplorerOpen(v => !v)}
+              className="md:hidden flex items-center justify-center w-6 h-6 rounded text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors shrink-0"
+              title="Toggle explorer"
+            >
+              <FolderOpen className="h-3.5 w-3.5" />
+            </button>
             <div className="flex items-center gap-2.5 min-w-0">
               {activeSession && <p className="text-sm font-medium truncate">{activeSession.project_name}</p>}
               <button onClick={copySessionId} title="Copy session ID" className="flex items-center gap-1 text-xs font-mono text-muted-foreground hover:text-foreground transition-colors shrink-0">
@@ -1751,8 +2215,8 @@ export function ChatClient({
                     </span>
                   )}
                   {activeSession.total_tokens > 0 && (() => {
-                    const totalCost = calcCost(activeSession.input_tokens, activeSession.output_tokens, activeSession.cache_creation_tokens, activeSession.cache_read_tokens);
-                    const exclCost  = calcCost(activeSession.input_tokens, activeSession.output_tokens, 0, 0);
+                    const totalCost = calcCost(activeSession.input_tokens, activeSession.output_tokens, activeSession.cache_creation_tokens, activeSession.cache_read_tokens, activeSession.model);
+                    const exclCost  = calcCost(activeSession.input_tokens, activeSession.output_tokens, 0, 0, activeSession.model);
                     return (
                       <span className="hidden sm:flex items-center gap-1.5 text-xs text-muted-foreground" title="Total cost / Excl. cache cost">
                         <span>{formatCost(totalCost)}</span>
@@ -1764,6 +2228,24 @@ export function ChatClient({
                   {activeSession.models_used?.length > 0 && (
                     <span className="hidden md:flex items-center gap-1 text-xs text-muted-foreground/70 font-mono truncate max-w-[180px]" title={activeSession.models_used.join(', ')}>
                       {activeSession.models_used.map(m => m.replace('claude-', '').replace(/-\d{8}$/, '')).join(', ')}
+                    </span>
+                  )}
+                  {activeSession.entrypoint && (
+                    <span className="hidden sm:flex items-center gap-1 text-xs rounded-full px-2 py-0.5"
+                      style={{ background: 'rgba(99,102,241,0.12)', border: '1px solid rgba(99,102,241,0.25)', color: '#818CF8' }}
+                      title={`Entrypoint: ${activeSession.entrypoint}`}>
+                      {activeSession.entrypoint === 'claude-vscode' || activeSession.entrypoint === 'vscode'
+                        ? <Eye className="h-3 w-3" />
+                        : <Terminal className="h-3 w-3" />}
+                      <span>{activeSession.entrypoint === 'claude-vscode' || activeSession.entrypoint === 'vscode' ? 'VS Code' : activeSession.entrypoint === 'cli' ? 'CLI' : activeSession.entrypoint}</span>
+                    </span>
+                  )}
+                  {activeSession.git_branch && (
+                    <span className="hidden md:flex items-center gap-1 text-xs font-mono rounded-full px-2 py-0.5 truncate max-w-[140px]"
+                      style={{ background: 'rgba(16,185,129,0.10)', border: '1px solid rgba(16,185,129,0.25)', color: '#34D399' }}
+                      title={`Branch: ${activeSession.git_branch}`}>
+                      <GitBranch className="h-3 w-3 shrink-0" />
+                      <span className="truncate">{activeSession.git_branch}</span>
                     </span>
                   )}
                   {activeSession.error_count > 0 && (

@@ -1,17 +1,19 @@
 import { NextResponse } from 'next/server';
 import pool from '@/lib/db';
-import { RowDataPacket } from 'mysql2';
+import { RowDataPacket } from '@/lib/db';
 
 export async function GET() {
+  const cutoff = new Date(Date.now() - 364 * 86400_000).toISOString().slice(0, 10);
   try {
     const [rows] = await pool.query<RowDataPacket[]>(
       `SELECT
-        DATE_FORMAT(timestamp, '%Y-%m-%d') AS day,
+        strftime('%Y-%m-%d', timestamp) AS day,
         COUNT(*) AS count
       FROM cc_events
-      WHERE timestamp >= DATE_SUB(NOW(), INTERVAL 364 DAY)
+      WHERE timestamp >= ?
       GROUP BY day
-      ORDER BY day ASC`
+      ORDER BY day ASC`,
+      [cutoff]
     );
 
     return NextResponse.json(

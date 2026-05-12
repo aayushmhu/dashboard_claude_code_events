@@ -4,7 +4,7 @@ import { readdir } from 'fs/promises';
 import { join } from 'path';
 
 export async function GET() {
-  const [rows] = await pool.execute(
+  const [rows] = await pool.query(
     `SELECT DISTINCT project_dir,
             SUBSTRING_INDEX(project_dir, '/', -1) AS project_name,
             MAX(last_seen_at) AS last_active

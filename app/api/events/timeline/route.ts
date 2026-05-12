@@ -1,22 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server';
 import pool from '@/lib/db';
-import { RowDataPacket } from 'mysql2';
+import { RowDataPacket } from '@/lib/db';
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const days = Math.min(parseInt(searchParams.get('days') || '7'), 90);
+  const cutoff = new Date(Date.now() - days * 86400_000).toISOString().replace('T', ' ').slice(0, 19);
 
   try {
     const [rows] = await pool.query<RowDataPacket[]>(
       `SELECT
-        DATE_FORMAT(timestamp, '%Y-%m-%d %H:00:00') as time,
+        strftime('%Y-%m-%d %H:00:00', timestamp) AS time,
         event_type,
-        COUNT(*) as count
+        COUNT(*) AS count
       FROM cc_events
-      WHERE timestamp >= DATE_SUB(NOW(), INTERVAL ? DAY)
+      WHERE timestamp >= ?
       GROUP BY time, event_type
       ORDER BY time ASC`,
-      [days]
+      [cutoff]
     );
 
     // Pivot into { time, EventType1: n, EventType2: n, ... }

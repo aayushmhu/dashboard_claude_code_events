@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import pool from '@/lib/db';
-import { RowDataPacket } from 'mysql2';
+import { RowDataPacket } from '@/lib/db';
 
 export async function GET() {
   try {
@@ -17,7 +17,7 @@ export async function GET() {
 
       SELECT
         agent,
-        JSON_UNQUOTE(JSON_EXTRACT(raw_payload, '$.agent_type')) AS agent_type,
+        json_extract(raw_payload, '$.agent_type') AS agent_type,
         COUNT(*) AS event_count
       FROM cc_events
       WHERE agent IS NOT NULL AND agent != 'main'

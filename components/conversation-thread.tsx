@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import { Event } from '@/lib/types';
 import { formatRelativeTime, formatAbsoluteTime, formatTokens, calcCost, formatCost, formatAgentName, getAgentIconType, detectMessageType } from '@/lib/utils';
 import { BUBBLE_COLORS, ROLE_COLORS, getAgentColor } from '@/lib/colors';
@@ -7,7 +8,7 @@ import { ToolCallCard } from '@/components/tool-call-card';
 import { TaskNotificationCard, AgentReportCard, AgentMessageCard } from '@/components/task-notification-card';
 import ReactMarkdown from 'react-markdown';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
-import { Bot, User, Play, BellRing, Crown, ShieldCheck, FlaskConical, Server, Layout, Cloud, Database, FileText } from 'lucide-react';
+import { Bot, User, Play, BellRing, Crown, ShieldCheck, FlaskConical, Server, Layout, Cloud, Database, FileText, Brain, ChevronDown, ChevronRight } from 'lucide-react';
 
 function getAgentIconComponent(iconType: string): React.ElementType {
   switch (iconType) {
@@ -23,8 +24,40 @@ function getAgentIconComponent(iconType: string): React.ElementType {
   }
 }
 
+function ThinkingPanel({ content }: { content: string }) {
+  const [open, setOpen] = useState(false);
+  const lines = content.split('\n');
+  const preview = lines.slice(0, 4).join('\n');
+  const hasMore = lines.length > 4;
+  return (
+    <div className="mb-2 rounded-xl overflow-hidden" style={{ background: 'rgba(139,92,246,0.07)', border: '1px solid rgba(139,92,246,0.18)' }}>
+      <button onClick={() => setOpen(o => !o)} className="w-full flex items-center gap-2 px-3 py-2 text-left">
+        <Brain className="h-3.5 w-3.5 shrink-0" style={{ color: '#A78BFA' }} />
+        <span className="text-[11px] font-medium" style={{ color: '#A78BFA' }}>Claude&apos;s reasoning</span>
+        <span className="ml-auto">
+          {open ? <ChevronDown className="h-3 w-3" style={{ color: '#A78BFA' }} /> : <ChevronRight className="h-3 w-3" style={{ color: '#A78BFA' }} />}
+        </span>
+      </button>
+      {open && (
+        <div className="px-3 pb-3">
+          <pre className="text-[11px] text-muted-foreground/80 whitespace-pre-wrap break-words leading-relaxed font-mono italic overflow-y-auto" style={{ maxHeight: 320 }}>
+            {content}
+          </pre>
+        </div>
+      )}
+      {!open && (
+        <div className="px-3 pb-2">
+          <pre className="text-[11px] text-muted-foreground/60 whitespace-pre-wrap break-words font-mono italic">{preview}</pre>
+          {hasMore && <span className="text-[10px]" style={{ color: '#A78BFA' }}>…click to expand</span>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 interface ConversationThreadProps {
   events: Event[];
+  thinkingByEventId?: Map<number, string>;
 }
 
 function Timestamp({ ts }: { ts: string }) {
@@ -40,7 +73,7 @@ function Timestamp({ ts }: { ts: string }) {
   );
 }
 
-export function ConversationThread({ events }: ConversationThreadProps) {
+export function ConversationThread({ events, thinkingByEventId }: ConversationThreadProps) {
   const rendered: React.ReactNode[] = [];
   const skipIds = new Set<number>();
 
@@ -130,6 +163,7 @@ export function ConversationThread({ events }: ConversationThreadProps) {
         const agentColor = getAgentColor(agentName);
         const AgentIcon = getAgentIconComponent(getAgentIconType(agentName));
 
+        const agentThinking = thinkingByEventId?.get(event.id);
         rendered.push(
           <div key={event.id} className="flex flex-col items-start gap-1.5 my-4 px-4">
             <div className="flex items-center gap-2">
@@ -150,16 +184,19 @@ export function ConversationThread({ events }: ConversationThreadProps) {
               </div>
               <Timestamp ts={event.timestamp} />
             </div>
-            <div
-              className="max-w-[82%] min-w-0 overflow-hidden rounded-2xl rounded-tl-md px-4 py-3 text-sm"
-              style={{
-                background: agentColor.bg,
-                border: `1px solid ${agentColor.border}`,
-                borderLeft: `3px solid ${agentColor.text}`,
-              }}
-            >
-              <div className="prose prose-sm dark:prose-invert max-w-none prose-p:leading-relaxed prose-p:my-1 prose-pre:my-2 prose-headings:my-2 prose-pre:overflow-x-auto prose-code:break-words">
-                <ReactMarkdown>{event.content || ''}</ReactMarkdown>
+            <div className="max-w-[82%] min-w-0 w-full">
+              {agentThinking && <ThinkingPanel content={agentThinking} />}
+              <div
+                className="min-w-0 overflow-hidden rounded-2xl rounded-tl-md px-4 py-3 text-sm"
+                style={{
+                  background: agentColor.bg,
+                  border: `1px solid ${agentColor.border}`,
+                  borderLeft: `3px solid ${agentColor.text}`,
+                }}
+              >
+                <div className="prose prose-sm dark:prose-invert max-w-none prose-p:leading-relaxed prose-p:my-1 prose-pre:my-2 prose-headings:my-2 prose-pre:overflow-x-auto prose-code:break-words">
+                  <ReactMarkdown>{event.content || ''}</ReactMarkdown>
+                </div>
               </div>
             </div>
             {event.total_tokens ? (
@@ -175,6 +212,7 @@ export function ConversationThread({ events }: ConversationThreadProps) {
           </div>
         );
       } else {
+        const thinking = thinkingByEventId?.get(event.id);
         rendered.push(
           <div key={event.id} className="flex flex-col items-start gap-1.5 my-4 px-4">
             <div className="flex items-center gap-2">
@@ -189,15 +227,18 @@ export function ConversationThread({ events }: ConversationThreadProps) {
               </div>
               <Timestamp ts={event.timestamp} />
             </div>
-            <div
-              className="max-w-[82%] min-w-0 overflow-hidden rounded-2xl rounded-tl-md px-4 py-3 text-sm"
-              style={{
-                background: BUBBLE_COLORS.assistant.bg,
-                border: `1px solid ${BUBBLE_COLORS.assistant.border}`,
-              }}
-            >
-              <div className="prose prose-sm dark:prose-invert max-w-none prose-p:leading-relaxed prose-p:my-1 prose-pre:my-2 prose-headings:my-2 prose-pre:overflow-x-auto prose-code:break-words">
-                <ReactMarkdown>{event.content || ''}</ReactMarkdown>
+            <div className="max-w-[82%] min-w-0 w-full">
+              {thinking && <ThinkingPanel content={thinking} />}
+              <div
+                className="min-w-0 overflow-hidden rounded-2xl rounded-tl-md px-4 py-3 text-sm"
+                style={{
+                  background: BUBBLE_COLORS.assistant.bg,
+                  border: `1px solid ${BUBBLE_COLORS.assistant.border}`,
+                }}
+              >
+                <div className="prose prose-sm dark:prose-invert max-w-none prose-p:leading-relaxed prose-p:my-1 prose-pre:my-2 prose-headings:my-2 prose-pre:overflow-x-auto prose-code:break-words">
+                  <ReactMarkdown>{event.content || ''}</ReactMarkdown>
+                </div>
               </div>
             </div>
             {event.total_tokens ? (

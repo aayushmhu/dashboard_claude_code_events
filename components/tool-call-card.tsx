@@ -1,10 +1,10 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import {
   File, Eye, Terminal, FolderSearch, Search, Bot, Slash,
   PlusCircle, RefreshCw, ListChecks, Wrench, Pencil,
-  ChevronDown, ChevronRight, Check, X,
+  ChevronDown, ChevronRight, Check, X, Copy,
   Mail, HelpCircle, UsersRound, ClipboardCheck,
 } from 'lucide-react';
 import { TOOL_COLORS, getAgentColor } from '@/lib/colors';
@@ -60,6 +60,21 @@ function JsonBlock({ data }: { data: unknown }) {
 
 function DiffView({ patch }: { patch: string }) {
   const raw = typeof patch === 'string' ? patch : JSON.stringify(patch, null, 2);
+  const [copied, setCopied] = useState(false);
+  const copyPatch = useCallback(() => {
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(raw);
+    } else {
+      const el = document.createElement('textarea');
+      el.value = raw;
+      document.body.appendChild(el);
+      el.select();
+      document.execCommand('copy');
+      document.body.removeChild(el);
+    }
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  }, [raw]);
   const lines = raw.split('\n');
 
   let oldLine = 1;
@@ -107,10 +122,23 @@ function DiffView({ patch }: { patch: string }) {
   });
 
   return (
-    <div className="rounded-md overflow-hidden text-[11px] font-mono leading-5" style={{ background: '#1a1a1a', maxHeight: '400px', overflowY: 'auto' }}>
-      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-        <tbody>{rows}</tbody>
-      </table>
+    <div className="rounded-md overflow-hidden text-[11px] font-mono leading-5" style={{ background: '#1a1a1a' }}>
+      <div className="flex items-center justify-between px-3 py-1.5" style={{ background: '#111', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+        <span className="text-[10px] text-muted-foreground/50">patch</span>
+        <button
+          onClick={copyPatch}
+          className="flex items-center gap-1 text-[10px] text-muted-foreground/50 hover:text-muted-foreground transition-colors"
+          title="Copy patch"
+        >
+          {copied ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
+          {copied ? 'copied' : 'copy'}
+        </button>
+      </div>
+      <div style={{ maxHeight: '400px', overflowY: 'auto' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <tbody>{rows}</tbody>
+        </table>
+      </div>
     </div>
   );
 }

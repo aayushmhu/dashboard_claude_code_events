@@ -50,7 +50,7 @@ export default async function SessionsPage({
   return (
     <div className="flex flex-col h-full">
       <Header title="Sessions" />
-      <div className="flex-1 p-6 space-y-4">
+      <div className="flex-1 px-3 py-4 sm:px-4 sm:py-5 lg:p-6 space-y-4">
         <SessionFilters projects={projects as ProjectStats[]} />
 
         <Card>

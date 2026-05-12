@@ -17,6 +17,10 @@ export interface Session {
   cache_read_tokens: number;
   model: string | null;
   models_used: string[];
+  entrypoint: string | null;
+  git_branch: string | null;
+  thinking_count: number;
+  image_count: number;
 }
 
 export interface Event {
@@ -47,6 +51,7 @@ export interface Event {
   cache_read_tokens: number | null;
   total_tokens: number | null;
   notification_type: string | null;
+  model: string | null;
 }
 
 export interface ProjectStats {

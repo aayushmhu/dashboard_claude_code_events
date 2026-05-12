@@ -27,9 +27,9 @@ export default async function ToolsPage() {
   return (
     <div className="flex flex-col h-full">
       <Header title="Tools" />
-      <div className="flex-1 p-6 space-y-6">
+      <div className="flex-1 px-3 py-4 sm:px-4 sm:py-5 lg:p-6 space-y-4 sm:space-y-6">
         {/* Stat cards */}
-        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
           <StatCard label="Total Tool Calls" value={totalCalls.toLocaleString()} icon={Hash} />
           <StatCard label="Unique Tools" value={tools.length} icon={Wrench} />
           <StatCard label="Error Rate" value={`${overallErrorRate}%`} icon={AlertTriangle} />

@@ -16,14 +16,16 @@ export function getProjectName(projectDir: string): string {
 export function parseDbDate(dateStr: string): Date {
   if (!dateStr) return new Date(NaN);
   if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(dateStr)) {
-    return new Date(dateStr.replace(' ', 'T'));
+    return new Date(dateStr.replace(' ', 'T') + 'Z');
   }
   return new Date(dateStr);
 }
 
 export function formatRelativeTime(dateStr: string): string {
   try {
-    return formatDistanceToNow(parseDbDate(dateStr), { addSuffix: true });
+    const d = parseDbDate(dateStr);
+    const clamped = new Date(Math.min(d.getTime(), Date.now()));
+    return formatDistanceToNow(clamped, { addSuffix: true });
   } catch {
     return dateStr;
   }
@@ -69,6 +71,8 @@ export function formatMs(ms: number): string {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
+// Kept for per-type rate labels in the UI (e.g. "$3/M", "$15/M").
+// Do NOT use for cost totals — use calcCost(model) instead.
 export const TOKEN_PRICING = {
   input: 3 / 1_000_000,
   output: 15 / 1_000_000,
@@ -76,22 +80,48 @@ export const TOKEN_PRICING = {
   cache_read: 0.30 / 1_000_000,
 } as const;
 
+export interface ModelPricing {
+  input: number;      // $ per million tokens
+  output: number;
+  cache_write: number;
+  cache_read: number;
+}
+
+// Pricing per million tokens, keyed by model family.
+// All rates from Anthropic's published pricing page.
+export const MODEL_PRICING: Record<string, ModelPricing> = {
+  opus:   { input: 15,   output: 75,   cache_write: 18.75, cache_read: 1.50 },
+  sonnet: { input: 3,    output: 15,   cache_write: 3.75,  cache_read: 0.30 },
+  haiku:  { input: 0.80, output: 4,    cache_write: 1.00,  cache_read: 0.08 },
+};
+
+export function getModelPricing(model: string | null | undefined): ModelPricing {
+  if (!model) return MODEL_PRICING.sonnet;
+  const m = model.toLowerCase();
+  if (m.includes('opus'))  return MODEL_PRICING.opus;
+  if (m.includes('haiku')) return MODEL_PRICING.haiku;
+  return MODEL_PRICING.sonnet;
+}
+
 export function calcCost(
   input: number,
   output: number,
   cacheWrite: number,
-  cacheRead: number
+  cacheRead: number,
+  model?: string | null
 ): number {
+  const p = getModelPricing(model);
   return (
-    input * TOKEN_PRICING.input +
-    output * TOKEN_PRICING.output +
-    cacheWrite * TOKEN_PRICING.cache_write +
-    cacheRead * TOKEN_PRICING.cache_read
+    input     * p.input       / 1_000_000 +
+    output    * p.output      / 1_000_000 +
+    cacheWrite * p.cache_write / 1_000_000 +
+    cacheRead  * p.cache_read  / 1_000_000
   );
 }
 
-export function calcCacheSavings(cacheRead: number): number {
-  return cacheRead * (TOKEN_PRICING.input - TOKEN_PRICING.cache_read);
+export function calcCacheSavings(cacheRead: number, model?: string | null): number {
+  const p = getModelPricing(model);
+  return cacheRead * (p.input - p.cache_read) / 1_000_000;
 }
 
 export function truncateId(id: string, length = 8): string {

@@ -9,6 +9,7 @@ const Card = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElemen
         'rounded-xl border border-border bg-card text-card-foreground',
         className
       )}
+      style={{ boxShadow: 'var(--card-shadow)', ...props.style }}
       {...props}
     />
   )

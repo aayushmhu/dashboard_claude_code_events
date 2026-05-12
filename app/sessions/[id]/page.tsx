@@ -4,7 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ConversationThread } from '@/components/conversation-thread';
 import { Badge } from '@/components/ui/badge';
 import { formatDuration, formatTokens, formatRelativeTime } from '@/lib/utils';
-import { Clock, Zap, AlertCircle, ArrowLeft, Coins } from 'lucide-react';
+import { Clock, Zap, AlertCircle, ArrowLeft, Coins, Terminal, Monitor, Code2, GitBranch, Brain, Image as ImageIcon } from 'lucide-react';
 import Link from 'next/link';
 import { Event, Session } from '@/lib/types';
 
@@ -46,12 +46,12 @@ export default async function SessionDetailPage({
   }
 
   const eventsArr = Array.isArray(events) ? (events as Event[]) : [];
-  const sess = session as Session & { model?: string };
+  const sess = session as Session & { model?: string; thinking_count?: number; image_count?: number; entrypoint?: string | null; git_branch?: string | null };
 
   return (
     <div className="flex flex-col h-full">
       <Header title="Session Detail" />
-      <div className="flex-1 p-6 space-y-4 overflow-y-auto">
+      <div className="flex-1 px-3 py-4 sm:px-4 sm:py-5 lg:p-6 space-y-4 overflow-y-auto">
         <Link
           href="/sessions"
           className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
@@ -101,6 +101,36 @@ export default async function SessionDetailPage({
                 )}
               </div>
             </div>
+
+            {/* Transcript metadata badges */}
+            {(sess.entrypoint || sess.git_branch || (sess.thinking_count ?? 0) > 0 || (sess.image_count ?? 0) > 0) && (
+              <div className="flex items-center gap-2 flex-wrap mt-3 pt-3 border-t border-border/30">
+                {sess.entrypoint && (
+                  <span className="flex items-center gap-1 text-[11px] text-muted-foreground bg-muted/50 px-2 py-0.5 rounded-full border border-border/40">
+                    {sess.entrypoint === 'vscode' ? <Monitor className="h-3 w-3" /> : sess.entrypoint === 'sdk' || sess.entrypoint === 'sdk-cli' ? <Code2 className="h-3 w-3" /> : <Terminal className="h-3 w-3" />}
+                    {sess.entrypoint === 'vscode' ? 'VS Code' : sess.entrypoint === 'sdk' || sess.entrypoint === 'sdk-cli' ? 'SDK' : 'CLI'}
+                  </span>
+                )}
+                {sess.git_branch && (
+                  <span className="flex items-center gap-1 text-[11px] text-emerald-500/80 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
+                    <GitBranch className="h-3 w-3" />
+                    {sess.git_branch}
+                  </span>
+                )}
+                {(sess.thinking_count ?? 0) > 0 && (
+                  <span className="flex items-center gap-1 text-[11px] text-violet-400/80 bg-violet-500/10 px-2 py-0.5 rounded-full border border-violet-500/20">
+                    <Brain className="h-3 w-3" />
+                    {sess.thinking_count} thinking block{sess.thinking_count !== 1 ? 's' : ''}
+                  </span>
+                )}
+                {(sess.image_count ?? 0) > 0 && (
+                  <span className="flex items-center gap-1 text-[11px] text-blue-400/80 bg-blue-500/10 px-2 py-0.5 rounded-full border border-blue-500/20">
+                    <ImageIcon className="h-3 w-3" />
+                    {sess.image_count} image{sess.image_count !== 1 ? 's' : ''}
+                  </span>
+                )}
+              </div>
+            )}
           </CardContent>
         </Card>
 

@@ -75,7 +75,7 @@ export function ToolUsageBar({ data }: ToolUsageBarProps) {
           tick={{ ...AXIS_TICK, fontSize: 12, fill: 'hsl(var(--foreground))' }}
           axisLine={false}
           tickLine={false}
-          width={64}
+          width={110}
         />
         <Tooltip content={<CustomTooltip />} cursor={{ fill: 'hsl(var(--muted))' }} />
         <Bar dataKey="total_calls" name="Calls" radius={[0, 6, 6, 0]} maxBarSize={22}>

@@ -1,6 +1,7 @@
 'use client';
 
-import { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import { useState } from 'react';
+import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
 import { ModelStats } from '@/lib/types';
 import { CHART_COLORS, formatTokens, formatCost, CT } from '@/lib/utils';
 
@@ -36,6 +37,8 @@ function CustomTooltip({ active, payload }: any) {
 }
 
 export function ModelBreakdown({ data }: ModelBreakdownProps) {
+  const [hovered, setHovered] = useState<number | null>(null);
+
   const chartData = data.map((d) => ({
     name: d.model === 'unknown' ? 'Unknown' : d.model.replace('claude-', '').replace(/-\d{8}$/, ''),
     value: d.total_tokens,
@@ -44,28 +47,58 @@ export function ModelBreakdown({ data }: ModelBreakdownProps) {
   }));
 
   return (
-    <ResponsiveContainer width="100%" height={240}>
-      <PieChart>
-        <Pie
-          data={chartData}
-          cx="50%"
-          cy="50%"
-          innerRadius={60}
-          outerRadius={88}
-          paddingAngle={3}
-          dataKey="value"
-          strokeWidth={0}
-        >
-          {chartData.map((_, i) => (
-            <Cell key={i} fill={COLORS[i % COLORS.length]} fillOpacity={0.9} />
-          ))}
-        </Pie>
-        <Tooltip content={<CustomTooltip />} />
-        <Legend
-          wrapperStyle={{ fontSize: '11px', paddingTop: '8px' }}
-          formatter={(value) => <span style={{ color: 'hsl(var(--muted-foreground))' }}>{value}</span>}
-        />
-      </PieChart>
-    </ResponsiveContainer>
+    <div className="space-y-3">
+      <ResponsiveContainer width="100%" height={220}>
+        <PieChart>
+          <Pie
+            data={chartData}
+            cx="50%"
+            cy="50%"
+            innerRadius={60}
+            outerRadius={88}
+            paddingAngle={3}
+            dataKey="value"
+            strokeWidth={0}
+            onMouseLeave={() => setHovered(null)}
+          >
+            {chartData.map((_, i) => (
+              <Cell
+                key={i}
+                fill={COLORS[i % COLORS.length]}
+                fillOpacity={hovered !== null && hovered !== i ? 0.15 : 0.9}
+                onMouseEnter={() => setHovered(i)}
+                onMouseLeave={() => setHovered(null)}
+                style={{ cursor: 'pointer', transition: 'fill-opacity 0.15s' }}
+              />
+            ))}
+          </Pie>
+          <Tooltip content={<CustomTooltip />} />
+        </PieChart>
+      </ResponsiveContainer>
+
+      {/* Legend */}
+      <div className="flex flex-wrap justify-center gap-x-4 gap-y-1.5 px-2">
+        {chartData.map((entry, i) => (
+          <div
+            key={entry.name}
+            className="flex items-center gap-1.5 cursor-pointer select-none transition-opacity"
+            style={{ opacity: hovered !== null && hovered !== i ? 0.35 : 1 }}
+            onMouseEnter={() => setHovered(i)}
+            onMouseLeave={() => setHovered(null)}
+          >
+            <span
+              className="inline-block h-2 w-2 rounded-full shrink-0"
+              style={{ background: COLORS[i % COLORS.length] }}
+            />
+            <span
+              className="text-[11px]"
+              style={{ color: hovered === i ? 'hsl(var(--foreground))' : 'hsl(var(--muted-foreground))' }}
+            >
+              {entry.name}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }

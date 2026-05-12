@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import pool from '@/lib/db';
-import { RowDataPacket } from 'mysql2';
+import { RowDataPacket } from '@/lib/db';
 
 export async function GET(
   request: NextRequest,
@@ -28,8 +28,13 @@ export async function GET(
       [name, limit]
     );
 
+    const parseJson = (v: unknown) => {
+      if (!v || typeof v === 'object') return v ?? null;
+      try { return JSON.parse(String(v)); } catch { return null; }
+    };
+
     return NextResponse.json(
-      calls.map((c) => ({ ...c, is_error: Boolean(c.is_error) }))
+      calls.map((c) => ({ ...c, is_error: Boolean(c.is_error), tool_input: parseJson(c.tool_input), tool_output: parseJson(c.tool_output) }))
     );
   } catch (error) {
     console.error('Tool detail error:', error);

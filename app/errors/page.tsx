@@ -41,7 +41,7 @@ export default async function ErrorsPage({
   return (
     <div className="flex flex-col h-full">
       <Header title="Errors" />
-      <div className="flex-1 p-6 space-y-6">
+      <div className="flex-1 px-3 py-4 sm:px-4 sm:py-5 lg:p-6 space-y-4 sm:space-y-6">
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium">Error Timeline</CardTitle>
@@ -108,7 +108,7 @@ export default async function ErrorsPage({
                         </Tooltip>
                       </div>
                       {err.error_message && (
-                        <p className="text-xs rounded p-2 font-mono" style={{ color: '#EF4444', background: 'rgba(239,68,68,0.08)' }}>
+                        <p className="text-xs rounded p-2 font-mono break-words overflow-x-auto" style={{ color: '#EF4444', background: 'rgba(239,68,68,0.08)' }}>
                           {err.error_message}
                         </p>
                       )}

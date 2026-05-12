@@ -14,9 +14,15 @@ import {
   Layers,
   FolderOpen,
   AlertTriangle,
+  Terminal,
+  Monitor,
+  Code2,
+  Cpu,
 } from 'lucide-react';
 import { StatsOverview, TimelinePoint, ToolStats, AgentStats, Session, TokenTotals, ModelStats } from '@/lib/types';
-import { formatTokens, formatCost, calcCost } from '@/lib/utils';
+
+interface EntrypointBreakdown { entrypoint: string; count: number; }
+import { formatTokens, formatCost, calcCost, calcCacheSavings } from '@/lib/utils';
 import Link from 'next/link';
 
 async function getData() {
@@ -35,7 +41,7 @@ async function getData() {
 
 export default async function DashboardPage() {
   const { stats, timeline, tools, sessions, agents, tokens, heatmap } = (await getData()) as {
-    stats: StatsOverview;
+    stats: StatsOverview & { entrypoint_breakdown?: EntrypointBreakdown[] };
     timeline: TimelinePoint[];
     tools: ToolStats[];
     sessions: Session[];
@@ -52,15 +58,16 @@ export default async function DashboardPage() {
   };
   const errorRateColor = safeStats.error_rate > 5 ? 'text-destructive' : undefined;
   const totals = tokens?.totals;
+  const cacheSavings = totals ? calcCacheSavings(totals.cache_read_tokens) : 0;
   const topModel = tokens?.by_model?.find((m) => m.total_tokens > 0)?.model ?? null;
   const topModelShort = topModel ? topModel.replace('claude-', '').replace(/-\d{8}$/, '') : null;
 
   return (
     <div className="flex flex-col h-full">
       <Header title="Dashboard" />
-      <div className="flex-1 p-6 space-y-6">
+      <div className="flex-1 px-3 py-4 sm:px-4 sm:py-5 lg:p-6 space-y-4 sm:space-y-6">
         {/* Stat cards */}
-        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
           <StatCard
             label="Total Sessions"
             value={safeStats.total_sessions}
@@ -92,47 +99,105 @@ export default async function DashboardPage() {
         {totals && totals.total_tokens > 0 && (
           <Link href="/tokens" className="block group">
             <div className="rounded-xl border border-border bg-card px-5 py-4 hover:border-primary/40 transition-colors">
-              <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center justify-between mb-4">
                 <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Token Usage</p>
                 <span className="text-xs text-muted-foreground group-hover:text-primary transition-colors">View details →</span>
               </div>
-              <div className="grid grid-cols-2 gap-x-8 gap-y-3 sm:grid-cols-4 lg:grid-cols-7">
-                <div>
-                  <p className="text-xs text-muted-foreground mb-0.5">Total Tokens</p>
-                  <p className="text-lg font-semibold">{formatTokens(totals.total_tokens)}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground mb-0.5">Excl. Cache</p>
-                  <p className="text-lg font-semibold text-blue-400">{formatCost(calcCost(totals.input_tokens, totals.output_tokens, 0, 0))}</p>
-                </div>
+
+              {/* Summary row */}
+              <div className="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-4 mb-4">
                 <div>
                   <p className="text-xs text-muted-foreground mb-0.5">Total Cost</p>
-                  <p className="text-lg font-semibold text-amber-400">{formatCost(totals.total_cost)}</p>
+                  <p className="text-xl font-semibold text-amber-400">{formatCost(totals.total_cost)}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground mb-0.5">Cache Savings</p>
+                  <p className="text-xl font-semibold text-emerald-400">{formatCost(cacheSavings)}</p>
                 </div>
                 <div>
                   <p className="text-xs text-muted-foreground mb-0.5">Cache Efficiency</p>
-                  <p className="text-lg font-semibold text-emerald-400">{totals.cache_efficiency}%</p>
+                  <p className="text-xl font-semibold text-emerald-400">{totals.cache_efficiency}%</p>
                 </div>
                 <div>
-                  <p className="text-xs text-muted-foreground mb-0.5">Input</p>
-                  <p className="text-lg font-semibold text-blue-400">{formatTokens(totals.input_tokens)}</p>
+                  <p className="text-xs text-muted-foreground mb-0.5">Top Model</p>
+                  <p className="text-xl font-semibold truncate">{topModelShort ?? '—'}</p>
                 </div>
-                <div>
-                  <p className="text-xs text-muted-foreground mb-0.5">Output</p>
-                  <p className="text-lg font-semibold text-rose-400">{formatTokens(totals.output_tokens)}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground mb-0.5">Model</p>
-                  <p className="text-lg font-semibold truncate">{topModelShort ?? '—'}</p>
-                </div>
+              </div>
+
+              {/* Cost-by-type breakdown */}
+              <div className="border-t border-border/40 pt-3 grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-4">
+                {[
+                  { label: 'Input',       tokens: totals.input_tokens,        cost: calcCost(totals.input_tokens, 0, 0, 0),        rate: '$3/M',    color: 'text-blue-400' },
+                  { label: 'Output',      tokens: totals.output_tokens,       cost: calcCost(0, totals.output_tokens, 0, 0),       rate: '$15/M',   color: 'text-rose-400' },
+                  { label: 'Cache Write', tokens: totals.cache_write_tokens,  cost: calcCost(0, 0, totals.cache_write_tokens, 0),  rate: '$3.75/M', color: 'text-amber-400' },
+                  { label: 'Cache Read',  tokens: totals.cache_read_tokens,   cost: calcCost(0, 0, 0, totals.cache_read_tokens),   rate: '$0.30/M', color: 'text-emerald-400' },
+                ].map(({ label, tokens, cost, rate, color }) => (
+                  <div key={label}>
+                    <div className="flex items-center gap-1.5 mb-0.5">
+                      <p className="text-xs text-muted-foreground">{label}</p>
+                      <span className="text-[10px] text-muted-foreground/40">{rate}</span>
+                    </div>
+                    <p className={`text-sm font-semibold ${color}`}>{formatTokens(tokens)}</p>
+                    <p className="text-xs text-muted-foreground/60">{formatCost(cost)}</p>
+                  </div>
+                ))}
               </div>
             </div>
           </Link>
         )}
 
+        {/* Workspace insight strip */}
+        {(() => {
+          const epBreakdown = stats?.entrypoint_breakdown ?? [];
+          const epTotal = epBreakdown.reduce((s, r) => s + r.count, 0);
+          const topModels = (tokens?.by_model ?? []).filter(m => m.total_tokens > 0).slice(0, 3);
+          const modelTotal = topModels.reduce((s, m) => s + m.total_tokens, 0);
+          if (epTotal === 0 && topModels.length === 0) return null;
+
+          const epIcon = (ep: string) => ep === 'vscode' ? <Monitor className="h-3 w-3" /> : ep === 'sdk' || ep === 'sdk-cli' ? <Code2 className="h-3 w-3" /> : <Terminal className="h-3 w-3" />;
+          const epLabel = (ep: string) => ep === 'vscode' ? 'VS Code' : ep === 'sdk' || ep === 'sdk-cli' ? 'SDK' : 'CLI';
+
+          return (
+            <div className="rounded-xl border border-border bg-card px-5 py-4">
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-3">Workspace</p>
+              <div className="flex flex-col sm:flex-row gap-4">
+                {epTotal > 0 && (
+                  <div className="flex-1">
+                    <p className="text-[11px] text-muted-foreground/70 mb-2">Entrypoint</p>
+                    <div className="flex items-center gap-3 flex-wrap">
+                      {epBreakdown.map(r => (
+                        <span key={r.entrypoint} className="flex items-center gap-1 text-xs text-muted-foreground">
+                          {epIcon(r.entrypoint)}
+                          <span>{epLabel(r.entrypoint)}</span>
+                          <span className="font-medium text-foreground">{r.count}</span>
+                          <span className="text-muted-foreground/50">({Math.round(r.count / epTotal * 100)}%)</span>
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {topModels.length > 0 && (
+                  <div className="flex-1">
+                    <p className="text-[11px] text-muted-foreground/70 mb-2">Models</p>
+                    <div className="flex items-center gap-3 flex-wrap">
+                      {topModels.map(m => (
+                        <span key={m.model} className="flex items-center gap-1 text-xs text-muted-foreground">
+                          <Cpu className="h-3 w-3" />
+                          <span>{m.model.replace('claude-', '').replace(/-\d{8}$/, '')}</span>
+                          <span className="font-medium text-foreground">{Math.round(m.total_tokens / modelTotal * 100)}%</span>
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })()}
+
         {/* Charts row */}
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-          <Card>
+        <div className="grid grid-cols-1 gap-3 sm:gap-4 lg:grid-cols-3">
+          <Card className="lg:col-span-2">
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-medium">Activity — Last 7 Days</CardTitle>
             </CardHeader>
@@ -162,7 +227,7 @@ export default async function DashboardPage() {
         </Card>
 
         {/* Bottom row */}
-        <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3 sm:gap-4 xl:grid-cols-3">
           <Card className="xl:col-span-2">
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-medium">Recent Sessions</CardTitle>

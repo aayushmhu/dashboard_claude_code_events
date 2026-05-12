@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import pool from '@/lib/db';
-import { RowDataPacket } from 'mysql2';
+import { RowDataPacket } from '@/lib/db';
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
@@ -26,7 +26,7 @@ export async function GET(request: NextRequest) {
       params.push(start);
     }
     if (end) {
-      conditions.push('s.started_at < DATE_ADD(?, INTERVAL 1 DAY)');
+      conditions.push("s.started_at < datetime(?, '+1 day')");
       params.push(end);
     }
 
@@ -43,15 +43,19 @@ export async function GET(request: NextRequest) {
         SUBSTRING_INDEX(s.project_dir, '/', -1) AS project_name,
         COUNT(e.id) AS event_count,
         COALESCE(SUM(e.is_error), 0) AS error_count,
-        TIMESTAMPDIFF(SECOND, s.started_at, s.last_seen_at) AS duration_seconds,
-        GROUP_CONCAT(DISTINCT e.tool_name ORDER BY e.tool_name SEPARATOR ',') AS tools_used_raw,
+        TIMESTAMPDIFF('SECOND', s.started_at, s.last_seen_at) AS duration_seconds,
+        GROUP_CONCAT(DISTINCT e.tool_name) AS tools_used_raw,
         COALESCE(SUM(e.total_tokens), 0) AS total_tokens,
         COALESCE(SUM(e.input_tokens), 0) AS input_tokens,
         COALESCE(SUM(e.output_tokens), 0) AS output_tokens,
         COALESCE(SUM(e.cache_creation_tokens), 0) AS cache_creation_tokens,
         COALESCE(SUM(e.cache_read_tokens), 0) AS cache_read_tokens,
         s.model,
-        GROUP_CONCAT(DISTINCT e.model ORDER BY e.model SEPARATOR ',') AS models_used_raw
+        GROUP_CONCAT(DISTINCT e.model) AS models_used_raw,
+        MAX(CASE WHEN e.event_type IN ('Stop', 'SubagentStop') AND e.entrypoint IS NOT NULL THEN e.entrypoint ELSE NULL END) AS entrypoint,
+        MAX(CASE WHEN e.event_type IN ('Stop', 'SubagentStop') AND e.git_branch IS NOT NULL THEN e.git_branch ELSE NULL END) AS git_branch,
+        (SELECT COUNT(*) FROM cc_transcript_records t WHERE t.session_id = s.session_id AND t.record_subtype = 'thinking') AS thinking_count,
+        (SELECT COUNT(*) FROM cc_transcript_records t WHERE t.session_id = s.session_id AND t.record_subtype IN ('image', 'document')) AS image_count
       FROM cc_sessions s
       LEFT JOIN cc_events e ON s.session_id = e.session_id
       ${whereClause}
@@ -84,6 +88,10 @@ export async function GET(request: NextRequest) {
       models_used: r.models_used_raw
         ? r.models_used_raw.split(',').filter(Boolean)
         : [],
+      entrypoint: r.entrypoint ?? null,
+      git_branch: r.git_branch ?? null,
+      thinking_count: Number(r.thinking_count),
+      image_count: Number(r.image_count),
       tools_used: r.tools_used_raw
         ? r.tools_used_raw.split(',').filter(Boolean)
         : [],

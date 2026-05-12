@@ -27,8 +27,8 @@ export function Header({ title }: HeaderProps) {
   }, [autoRefresh, refresh]);
 
   return (
-    <header className="flex h-14 items-center justify-between border-b border-border px-6">
-      <h1 className="text-xl font-semibold">{title}</h1>
+    <header className="flex h-14 items-center justify-between border-b border-border px-6 pl-14 md:pl-6">
+      <h1 className="text-base sm:text-xl font-semibold truncate">{title}</h1>
       <div className="flex items-center gap-2">
         <Button
           variant={autoRefresh ? 'default' : 'outline'}
@@ -37,7 +37,7 @@ export function Header({ title }: HeaderProps) {
           className="gap-1.5 text-xs"
         >
           <RefreshCw className={`h-3.5 w-3.5 ${autoRefresh ? 'animate-spin' : ''}`} />
-          {autoRefresh ? 'Auto-refreshing' : 'Auto-refresh'}
+          <span className="hidden sm:inline">{autoRefresh ? 'Auto-refreshing' : 'Auto-refresh'}</span>
         </Button>
         {mounted && (
           <Button

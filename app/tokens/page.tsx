@@ -88,7 +88,7 @@ export default async function TokensPage({
   return (
     <div className="flex flex-col h-full">
       <Header title="Token Usage" />
-      <div className="flex-1 p-6 space-y-6 overflow-y-auto">
+      <div className="flex-1 px-3 py-4 sm:px-4 sm:py-5 lg:p-6 space-y-4 sm:space-y-6 overflow-y-auto">
 
         {/* Date range picker — always visible so user can change filter and refresh */}
         <Suspense fallback={null}>
@@ -108,16 +108,18 @@ export default async function TokensPage({
         {hasData && (
         <>
         {/* Stat cards */}
-        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
           <StatCard
-            label="Total Tokens"
-            value={formatTokens(totals.total_tokens)}
-            icon={Zap}
-          />
-          <StatCard
-            label="Estimated Cost"
+            label="Total Cost"
             value={formatCost(totals.total_cost)}
             icon={DollarSign}
+            description="all token types"
+          />
+          <StatCard
+            label="Cache Savings"
+            value={formatCost(cacheSavings)}
+            icon={Sparkles}
+            description={`${formatTokens(totals.cache_read_tokens)} reads at $0.30/M`}
           />
           <StatCard
             label="Cache Efficiency"
@@ -126,32 +128,36 @@ export default async function TokensPage({
             description="cache reads / (cache reads + input)"
           />
           <StatCard
-            label="Output Tokens"
-            value={formatTokens(totals.output_tokens)}
-            icon={Coins}
+            label="Total Tokens"
+            value={formatTokens(totals.total_tokens)}
+            icon={Zap}
+            description="input + output + cache"
           />
         </div>
 
-        {/* Token breakdown strip */}
-        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        {/* Token breakdown — tokens + cost per type */}
+        <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
           {[
-            { label: 'Input', value: totals.input_tokens, color: 'text-blue-400' },
-            { label: 'Output', value: totals.output_tokens, color: 'text-rose-400' },
-            { label: 'Cache Write', value: totals.cache_write_tokens, color: 'text-amber-400' },
-            { label: 'Cache Read', value: totals.cache_read_tokens, color: 'text-emerald-400' },
-          ].map(({ label, value, color }) => (
+            { label: 'Input',       value: totals.input_tokens,       cost: calcCost(totals.input_tokens, 0, 0, 0),       color: 'text-blue-400',    rate: '$3/M' },
+            { label: 'Output',      value: totals.output_tokens,      cost: calcCost(0, totals.output_tokens, 0, 0),      color: 'text-rose-400',    rate: '$15/M' },
+            { label: 'Cache Write', value: totals.cache_write_tokens, cost: calcCost(0, 0, totals.cache_write_tokens, 0), color: 'text-amber-400',   rate: '$3.75/M' },
+            { label: 'Cache Read',  value: totals.cache_read_tokens,  cost: calcCost(0, 0, 0, totals.cache_read_tokens),  color: 'text-emerald-400', rate: '$0.30/M' },
+          ].map(({ label, value, cost, color, rate }) => (
             <div key={label} className="rounded-xl border border-border bg-card px-4 py-3">
-              <p className="text-xs text-muted-foreground mb-1">{label}</p>
+              <div className="flex items-center justify-between mb-1">
+                <p className="text-xs text-muted-foreground">{label}</p>
+                <span className="text-[10px] text-muted-foreground/40">{rate}</span>
+              </div>
               <p className={`text-lg font-semibold ${color}`}>{formatTokens(value)}</p>
+              <p className="text-xs text-muted-foreground/60 mt-0.5">{formatCost(cost)}</p>
             </div>
           ))}
         </div>
 
-        {/* Forecast + cache savings */}
-        {(forecastCard || cacheSavingsCard) && (
+        {/* Forecast */}
+        {forecastCard && (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             {forecastCard}
-            {cacheSavingsCard}
           </div>
         )}
 
@@ -166,7 +172,7 @@ export default async function TokensPage({
         </Card>
 
         {/* Model + Cost side by side */}
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <div className="grid grid-cols-1 gap-4 sm:gap-6 lg:grid-cols-2">
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-medium">Model Breakdown</CardTitle>

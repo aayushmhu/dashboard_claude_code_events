@@ -1,6 +1,7 @@
 'use client';
 
-import { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import { useState } from 'react';
+import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
 import { AgentStats } from '@/lib/types';
 import { CHART_COLORS, CT } from '@/lib/utils';
 
@@ -25,6 +26,8 @@ function CustomTooltip({ active, payload }: any) {
 }
 
 export function AgentDonut({ data }: AgentDonutProps) {
+  const [hovered, setHovered] = useState<number | null>(null);
+
   const chartData = data.map((d) => ({
     name: d.agent_type ? `${d.agent} (${d.agent_type})` : d.agent,
     value: d.event_count,
@@ -51,23 +54,42 @@ export function AgentDonut({ data }: AgentDonutProps) {
             paddingAngle={3}
             dataKey="value"
             strokeWidth={0}
+            onMouseLeave={() => setHovered(null)}
           >
             {chartData.map((_, index) => (
-              <Cell key={index} fill={COLORS[index % COLORS.length]} fillOpacity={0.9} />
+              <Cell
+                key={index}
+                fill={COLORS[index % COLORS.length]}
+                fillOpacity={hovered !== null && hovered !== index ? 0.15 : 0.9}
+                onMouseEnter={() => setHovered(index)}
+                onMouseLeave={() => setHovered(null)}
+                style={{ cursor: 'pointer', transition: 'fill-opacity 0.15s' }}
+              />
             ))}
           </Pie>
           <Tooltip content={<CustomTooltip />} />
         </PieChart>
       </ResponsiveContainer>
-      {/* Legend outside ResponsiveContainer so it wraps naturally */}
+
+      {/* Legend */}
       <div className="flex flex-wrap justify-center gap-x-3 gap-y-1.5 mt-2 px-2">
         {chartData.map((entry, index) => (
-          <div key={entry.name} className="flex items-center gap-1.5">
+          <div
+            key={entry.name}
+            className="flex items-center gap-1.5 cursor-pointer select-none transition-opacity"
+            style={{ opacity: hovered !== null && hovered !== index ? 0.35 : 1 }}
+            onMouseEnter={() => setHovered(index)}
+            onMouseLeave={() => setHovered(null)}
+          >
             <span
               className="inline-block h-2 w-2 rounded-full shrink-0"
               style={{ background: COLORS[index % COLORS.length] }}
             />
-            <span className="text-[11px] text-muted-foreground truncate max-w-[120px]" title={entry.name}>
+            <span
+              className="text-[11px] truncate max-w-[120px]"
+              style={{ color: hovered === index ? 'hsl(var(--foreground))' : 'hsl(var(--muted-foreground))' }}
+              title={entry.name}
+            >
               {entry.name}
             </span>
           </div>

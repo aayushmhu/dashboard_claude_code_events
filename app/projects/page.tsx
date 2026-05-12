@@ -24,7 +24,7 @@ export default async function ProjectsPage() {
   return (
     <div className="flex flex-col h-full">
       <Header title="Projects" />
-      <div className="flex-1 p-6 space-y-6">
+      <div className="flex-1 px-3 py-4 sm:px-4 sm:py-5 lg:p-6 space-y-4 sm:space-y-6">
         {projects.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-24 text-muted-foreground">
             <FolderEmptyIcon />
@@ -33,7 +33,7 @@ export default async function ProjectsPage() {
           </div>
         ) : (
           <>
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+            <div className="grid grid-cols-1 gap-3 sm:gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
               {projects.map((p) => (
                 <ProjectCard key={p.project_dir} project={p} />
               ))}

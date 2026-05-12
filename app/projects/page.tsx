@@ -9,8 +9,8 @@ import { ProjectStats, ToolStats } from '@/lib/types';
 async function getData() {
   const base = process.env.NEXT_PUBLIC_APP_URL || `http://localhost:${process.env.PORT || 3000}`;
   const [projects, tools] = await Promise.all([
-    fetch(`${base}/api/projects`, { cache: 'no-store' }).then((r) => r.json()),
-    fetch(`${base}/api/tools`, { cache: 'no-store' }).then((r) => r.json()),
+    fetch(`${base}/api/projects`, { cache: 'no-store' }).then((r) => r.json()).catch(() => []),
+    fetch(`${base}/api/tools`, { cache: 'no-store' }).then((r) => r.json()).catch(() => []),
   ]);
   return { projects, tools };
 }

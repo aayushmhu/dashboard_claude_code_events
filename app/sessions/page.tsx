@@ -26,8 +26,8 @@ async function getData(searchParams: SearchParams) {
   params.set('limit', '20');
 
   const [sessionsRes, projects] = await Promise.all([
-    fetch(`${base}/api/sessions?${params}`, { cache: 'no-store' }).then((r) => r.json()),
-    fetch(`${base}/api/projects`, { cache: 'no-store' }).then((r) => r.json()),
+    fetch(`${base}/api/sessions?${params}`, { cache: 'no-store' }).then((r) => r.json()).catch(() => ({ sessions: [], total: 0 })),
+    fetch(`${base}/api/projects`, { cache: 'no-store' }).then((r) => r.json()).catch(() => []),
   ]);
 
   return { sessionsRes, projects };

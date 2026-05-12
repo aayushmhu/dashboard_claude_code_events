@@ -12,8 +12,8 @@ import Link from 'next/link';
 
 async function getData() {
   const base = process.env.NEXT_PUBLIC_APP_URL || `http://localhost:${process.env.PORT || 3000}`;
-  const tools = await fetch(`${base}/api/tools`, { cache: 'no-store' }).then((r) => r.json());
-  return tools as ToolStats[];
+  const data = await fetch(`${base}/api/tools`, { cache: 'no-store' }).then((r) => r.json()).catch(() => []);
+  return (Array.isArray(data) ? data : []) as ToolStats[];
 }
 
 export default async function ToolsPage() {

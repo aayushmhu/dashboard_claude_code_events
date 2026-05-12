@@ -20,9 +20,10 @@ async function getData(name: string, errorsOnly: boolean) {
   const base = process.env.NEXT_PUBLIC_APP_URL || `http://localhost:${process.env.PORT || 3000}`;
   const params = new URLSearchParams({ limit: '50' });
   if (errorsOnly) params.set('errors_only', 'true');
-  return fetch(`${base}/api/tools/${encodeURIComponent(name)}?${params}`, {
+  const data = await fetch(`${base}/api/tools/${encodeURIComponent(name)}?${params}`, {
     cache: 'no-store',
-  }).then((r) => r.json());
+  }).then((r) => r.json()).catch(() => null);
+  return data ?? null;
 }
 
 export default async function ToolDetailPage({

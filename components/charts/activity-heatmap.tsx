@@ -1,5 +1,6 @@
 'use client';
 
+import React from 'react';
 import { eachDayOfInterval, format, startOfWeek, subDays } from 'date-fns';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 
@@ -12,12 +13,13 @@ interface ActivityHeatmapProps {
   data: HeatmapDay[];
 }
 
-function intensityClass(count: number): string {
-  if (count === 0) return 'bg-muted/40';
-  if (count <= 3) return 'bg-emerald-900';
-  if (count <= 9) return 'bg-emerald-700';
-  if (count <= 24) return 'bg-emerald-500';
-  return 'bg-emerald-300';
+function intensityStyle(count: number): React.CSSProperties {
+  if (count === 0) return { background: 'hsl(var(--muted) / 0.4)' };
+  if (count <= 3)  return { background: 'rgba(16,185,129,0.20)' };
+  if (count <= 9)  return { background: 'rgba(16,185,129,0.40)' };
+  if (count <= 24) return { background: 'rgba(16,185,129,0.65)' };
+  if (count <= 49) return { background: 'rgba(16,185,129,0.85)' };
+  return                  { background: 'rgba(16,185,129,1.00)' };
 }
 
 const DOW_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -76,7 +78,8 @@ export function ActivityHeatmap({ data }: ActivityHeatmapProps) {
               <Tooltip key={wi}>
                 <TooltipTrigger asChild>
                   <div
-                    className={`flex-1 min-w-0 aspect-square rounded-[2px] cursor-default transition-opacity hover:opacity-70 ${intensityClass(count)}`}
+                    className="flex-1 min-w-0 aspect-square rounded-[2px] cursor-default transition-opacity hover:opacity-70"
+                    style={intensityStyle(count)}
                   />
                 </TooltipTrigger>
                 <TooltipContent side="top" className="text-xs">
@@ -93,8 +96,8 @@ export function ActivityHeatmap({ data }: ActivityHeatmapProps) {
       {/* Legend */}
       <div className="flex items-center gap-1.5 mt-1 pl-8">
         <span className="text-[9px] text-muted-foreground/50">Less</span>
-        {[0, 1, 5, 15, 30].map((n) => (
-          <div key={n} className={`w-3 h-3 rounded-sm shrink-0 ${intensityClass(n)}`} />
+        {[0, 1, 5, 15, 30, 60].map((n) => (
+          <div key={n} className="w-3 h-3 rounded-sm shrink-0" style={intensityStyle(n)} />
         ))}
         <span className="text-[9px] text-muted-foreground/50">More</span>
       </div>

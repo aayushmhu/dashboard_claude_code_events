@@ -34,7 +34,7 @@ export default async function SessionDetailPage({
   const { id } = await params;
   const { session, events } = await getData(id);
 
-  if (session?.error) {
+  if (!session || session?.error) {
     return (
       <div className="flex flex-col h-full">
         <Header title="Session" />

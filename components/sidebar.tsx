@@ -22,79 +22,14 @@ import { useState, useEffect } from 'react';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 
 const navItems = [
-  {
-    href: '/',
-    label: 'Dashboard',
-    icon: LayoutDashboard,
-    color: 'text-blue-400',
-    bg: 'bg-blue-500/10',
-    gradient: 'from-blue-500/20 to-blue-500/0',
-    border: 'border-blue-500/50',
-  },
-  {
-    href: '/conversations',
-    label: 'Conversations',
-    icon: MessageSquare,
-    color: 'text-cyan-400',
-    bg: 'bg-cyan-500/10',
-    gradient: 'from-cyan-500/20 to-cyan-500/0',
-    border: 'border-cyan-500/50',
-  },
-  {
-    href: '/chat',
-    label: 'Chat',
-    icon: Terminal,
-    color: 'text-fuchsia-400',
-    bg: 'bg-fuchsia-500/10',
-    gradient: 'from-fuchsia-500/20 to-fuchsia-500/0',
-    border: 'border-fuchsia-500/50',
-    experimental: true,
-  },
-  {
-    href: '/projects',
-    label: 'Projects',
-    icon: FolderOpen,
-    color: 'text-emerald-400',
-    bg: 'bg-emerald-500/10',
-    gradient: 'from-emerald-500/20 to-emerald-500/0',
-    border: 'border-emerald-500/50',
-  },
-  {
-    href: '/sessions',
-    label: 'Sessions',
-    icon: List,
-    color: 'text-violet-400',
-    bg: 'bg-violet-500/10',
-    gradient: 'from-violet-500/20 to-violet-500/0',
-    border: 'border-violet-500/50',
-  },
-  {
-    href: '/tools',
-    label: 'Tools',
-    icon: Wrench,
-    color: 'text-amber-400',
-    bg: 'bg-amber-500/10',
-    gradient: 'from-amber-500/20 to-amber-500/0',
-    border: 'border-amber-500/50',
-  },
-  {
-    href: '/tokens',
-    label: 'Tokens',
-    icon: Coins,
-    color: 'text-yellow-400',
-    bg: 'bg-yellow-500/10',
-    gradient: 'from-yellow-500/20 to-yellow-500/0',
-    border: 'border-yellow-500/50',
-  },
-  {
-    href: '/errors',
-    label: 'Errors',
-    icon: AlertCircle,
-    color: 'text-rose-400',
-    bg: 'bg-rose-500/10',
-    gradient: 'from-rose-500/20 to-rose-500/0',
-    border: 'border-rose-500/50',
-  },
+  { href: '/',              label: 'Dashboard',     icon: LayoutDashboard },
+  { href: '/conversations', label: 'Conversations', icon: MessageSquare },
+  { href: '/chat',          label: 'Chat',          icon: Terminal, experimental: true },
+  { href: '/projects',      label: 'Projects',      icon: FolderOpen },
+  { href: '/sessions',      label: 'Sessions',      icon: List },
+  { href: '/tools',         label: 'Tools',         icon: Wrench },
+  { href: '/tokens',        label: 'Tokens',        icon: Coins },
+  { href: '/errors',        label: 'Errors',        icon: AlertCircle },
 ];
 
 export function HamburgerButton({ onClick }: { onClick: () => void }) {
@@ -172,14 +107,14 @@ export function Sidebar() {
           'flex h-14 items-center border-b border-border/60',
           collapsed ? 'justify-center px-0' : 'px-4 gap-3'
         )}>
-          <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-blue-500/25 shrink-0">
+          <Link href="/" onClick={handleNavClick} className="w-8 h-8 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-blue-500/25 shrink-0 hover:opacity-90 transition-opacity">
             <Zap className="h-4 w-4 text-white" />
-          </div>
+          </Link>
           {!collapsed && (
-            <div className="min-w-0 flex-1">
+            <Link href="/" onClick={handleNavClick} className="min-w-0 flex-1 hover:opacity-80 transition-opacity">
               <p className="text-sm font-semibold leading-none truncate">Claude Code</p>
               <p className="text-[10px] text-muted-foreground mt-0.5 truncate">Analytics</p>
-            </div>
+            </Link>
           )}
           {/* Close button — mobile only */}
           {!collapsed && (
@@ -195,7 +130,7 @@ export function Sidebar() {
 
         {/* Nav */}
         <nav className="flex-1 overflow-y-auto py-3 px-2 space-y-0.5">
-          {navItems.map(({ href, label, icon: Icon, color, bg, gradient, border, experimental }) => {
+          {navItems.map(({ href, label, icon: Icon, experimental }) => {
             const isActive = href === '/' ? pathname === '/' : pathname.startsWith(href);
             const link = (
               <Link
@@ -203,18 +138,13 @@ export function Sidebar() {
                 href={href}
                 onClick={handleNavClick}
                 className={cn(
-                  'group flex items-center gap-3 rounded-xl px-2.5 py-2 text-sm transition-all duration-200 relative',
+                  'group flex items-center gap-3 rounded-lg px-2.5 py-2 text-sm transition-colors duration-150 border-l-2',
                   isActive
-                    ? `bg-gradient-to-r ${gradient} border-l-2 ${border} pl-[calc(0.625rem-2px)] font-medium`
-                    : 'text-muted-foreground hover:text-foreground hover:bg-white/5 border-l-2 border-transparent'
+                    ? 'border-primary bg-primary/5 text-foreground font-medium'
+                    : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-white/5'
                 )}
               >
-                <div className={cn(
-                  'w-7 h-7 rounded-lg flex items-center justify-center shrink-0 transition-colors duration-200',
-                  isActive ? bg : 'group-hover:bg-white/5'
-                )}>
-                  <Icon className={cn('h-3.5 w-3.5 transition-colors', isActive ? color : 'text-muted-foreground group-hover:text-foreground')} />
-                </div>
+                <Icon className={cn('h-3.5 w-3.5 shrink-0 transition-colors', isActive ? 'text-foreground' : 'text-muted-foreground group-hover:text-foreground')} />
                 {!collapsed && (
                   <span className="truncate text-[13px] flex items-center gap-1.5">
                     {label}

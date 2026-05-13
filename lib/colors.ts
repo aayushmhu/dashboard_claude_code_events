@@ -5,8 +5,8 @@ export const EVENT_COLORS: Record<string, string> = {
   Stop:             '#10B981',
   SubagentStop:     '#8B5CF6',
   PreToolUse:       '#F59E0B',
-  PostToolUse:      '#F59E0B',
-  Notification:     '#64748B',
+  PostToolUse:      '#D97706',
+  Notification:     '#D97706',
 };
 
 // Role colors — used in conversation replay, agent breakdown
@@ -29,14 +29,14 @@ export const TOOL_COLORS: Record<string, string> = {
   Glob:       '#FBBF24',
   Edit:       '#F472B6',
   Grep:       '#818CF8',
-  TaskCreate: '#8B5CF6',
+  TaskCreate: '#A78BFA',
   TaskUpdate: '#8B5CF6',
   TodoWrite:       '#14B8A6',
   ToolSearch:      '#64748B',
   SendMessage:     '#06B6D4',
   AskUserQuestion: '#3B82F6',
   TeamCreate:      '#8B5CF6',
-  TaskOutput:      '#8B5CF6',
+  TaskOutput:      '#7C3AED',
 };
 
 // Token breakdown colors — used in token usage charts, cost estimation

@@ -1585,7 +1585,9 @@ export function ChatClient({
               if (ev.subtype === 'init') {
                 if (ev.session_id) {
                   setCurrentSessionId(ev.session_id);
-                  router.push(`/chat/${ev.session_id}`, { scroll: false });
+                  // Use replaceState instead of router.push — navigating to /chat/[id]
+                  // remounts ChatClient (different page component), aborting the live stream.
+                  window.history.replaceState(null, '', `/chat/${ev.session_id}`);
                 }
                 if (ev.slash_commands?.length) {
                   const knownNames = new Set(SLASH_COMMANDS.map(c => c.name));

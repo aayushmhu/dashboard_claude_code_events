@@ -88,7 +88,7 @@ export default async function ToolDetailPage({
                       <div className="flex items-center justify-between gap-2 flex-wrap">
                         <div className="flex items-center gap-2">
                           <Link
-                            href={`/conversations?session=${call.session_id}`}
+                            href={`/conversations/${call.session_id}`}
                             className="font-mono text-xs text-muted-foreground hover:text-primary"
                           >
                             {truncateId(call.session_id, 12)}

@@ -2,8 +2,9 @@
 
 import { useState } from 'react';
 import {
-  AreaChart,
-  Area,
+  ComposedChart,
+  Bar,
+  Line,
   XAxis,
   YAxis,
   Tooltip,
@@ -12,7 +13,6 @@ import {
 } from 'recharts';
 import { TokenTimelinePoint } from '@/lib/types';
 import { CHART_COLORS, formatTokens, formatCost, CT, AXIS_TICK, GRID_STROKE } from '@/lib/utils';
-import { TOKEN_COLORS } from '@/lib/colors';
 import { format } from 'date-fns';
 
 interface TokenTimelineProps {
@@ -27,18 +27,18 @@ function formatTick(value: string) {
   }
 }
 
-const SERIES = [
-  { key: 'input_tokens',      name: 'Input',      color: TOKEN_COLORS.input },
-  { key: 'output_tokens',     name: 'Output',     color: TOKEN_COLORS.output },
-  { key: 'cache_read_tokens', name: 'Cache Read', color: TOKEN_COLORS.cacheRead },
+const BARS = [
+  { key: 'cache_read_tokens',  name: 'Cache Read',  color: '#10B981' },
+  { key: 'cache_write_tokens', name: 'Cache Write', color: '#F59E0B' },
+  { key: 'input_tokens',       name: 'Input',       color: '#94A3B8' },
+  { key: 'output_tokens',      name: 'Output',      color: '#3B82F6' },
 ];
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function CustomTooltip({ active, payload, label }: any) {
   if (!active || !payload?.length) return null;
-  const filtered = payload.filter((p: { value: number }) => p.value > 0);
-  if (!filtered.length) return null;
-  const totalCost = (payload[0]?.payload as TokenTimelinePoint)?.cost ?? 0;
+  const filtered = payload.filter((p: { value: number; dataKey: string }) => p.value > 0 && p.dataKey !== 'cost');
+  const costEntry = payload.find((p: { dataKey: string }) => p.dataKey === 'cost');
   return (
     <div style={{ ...CT.box, minWidth: '180px', padding: '12px 14px' }}>
       <p style={{ ...CT.label, marginBottom: 10 }}>{formatTick(label)}</p>
@@ -49,10 +49,10 @@ function CustomTooltip({ active, payload, label }: any) {
           <span style={{ ...CT.val, marginLeft: 12 }}>{formatTokens(entry.value)}</span>
         </div>
       ))}
-      {totalCost > 0 && (
+      {costEntry && costEntry.value > 0 && (
         <div style={CT.divider}>
           <span style={CT.name}>Cost</span>
-          <span style={{ ...CT.val, color: CHART_COLORS.amber }}>{formatCost(totalCost)}</span>
+          <span style={{ ...CT.val, color: CHART_COLORS.amber }}>{formatCost(costEntry.value)}</span>
         </div>
       )}
     </div>
@@ -65,15 +65,7 @@ export function TokenTimeline({ data }: TokenTimelineProps) {
   return (
     <div className="space-y-3">
       <ResponsiveContainer width="100%" height={240}>
-        <AreaChart data={data} margin={{ top: 8, right: 4, left: 0, bottom: 0 }}>
-          <defs>
-            {SERIES.map(({ key, color }) => (
-              <linearGradient key={key} id={`tgrad-${key}`} x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor={color} stopOpacity={0.3} />
-                <stop offset="100%" stopColor={color} stopOpacity={0} />
-              </linearGradient>
-            ))}
-          </defs>
+        <ComposedChart data={data} margin={{ top: 8, right: 48, left: 0, bottom: 0 }}>
           <CartesianGrid strokeDasharray="3 3" stroke={GRID_STROKE} vertical={false} />
           <XAxis
             dataKey="time"
@@ -84,37 +76,49 @@ export function TokenTimeline({ data }: TokenTimelineProps) {
             interval="preserveStartEnd"
           />
           <YAxis
+            yAxisId="tokens"
             tickFormatter={(v) => formatTokens(v)}
             tick={AXIS_TICK}
             axisLine={false}
             tickLine={false}
             width={52}
           />
-          <Tooltip content={<CustomTooltip />} cursor={{ stroke: 'hsl(var(--border))', strokeWidth: 1 }} />
-          {SERIES.map(({ key, name, color }) => {
-            const dimmed = hovered !== null && hovered !== key;
-            return (
-              <Area
-                key={key}
-                type="monotone"
-                dataKey={key}
-                name={name}
-                stroke={color}
-                strokeOpacity={dimmed ? 0.12 : 1}
-                fill={dimmed ? 'transparent' : `url(#tgrad-${key})`}
-                strokeWidth={hovered === key ? 2.5 : 2}
-                dot={false}
-                activeDot={{ r: 4, strokeWidth: 0 }}
-                connectNulls
-              />
-            );
-          })}
-        </AreaChart>
+          <YAxis
+            yAxisId="cost"
+            orientation="right"
+            tickFormatter={(v) => formatCost(v)}
+            tick={AXIS_TICK}
+            axisLine={false}
+            tickLine={false}
+            width={52}
+          />
+          <Tooltip content={<CustomTooltip />} cursor={{ fill: 'hsl(var(--muted))', opacity: 0.3 }} />
+          {BARS.map(({ key, color }) => (
+            <Bar
+              key={key}
+              yAxisId="tokens"
+              dataKey={key}
+              stackId="tokens"
+              fill={color}
+              fillOpacity={hovered !== null && hovered !== key ? 0.25 : 0.85}
+              isAnimationActive={false}
+            />
+          ))}
+          <Line
+            yAxisId="cost"
+            dataKey="cost"
+            stroke={CHART_COLORS.amber}
+            strokeWidth={1.5}
+            dot={false}
+            activeDot={{ r: 3, strokeWidth: 0 }}
+            isAnimationActive={false}
+          />
+        </ComposedChart>
       </ResponsiveContainer>
 
       {/* Legend */}
       <div className="flex flex-wrap gap-x-4 gap-y-1 px-1">
-        {SERIES.map(({ key, name, color }) => (
+        {BARS.map(({ key, name, color }) => (
           <span
             key={key}
             className="flex items-center gap-1.5 text-[11px] cursor-pointer select-none transition-opacity"
@@ -122,12 +126,16 @@ export function TokenTimeline({ data }: TokenTimelineProps) {
             onMouseEnter={() => setHovered(key)}
             onMouseLeave={() => setHovered(null)}
           >
-            <span className="h-2 w-2 rounded-full shrink-0" style={{ background: color }} />
+            <span className="h-2 w-2 rounded-[2px] shrink-0" style={{ background: color }} />
             <span style={{ color: hovered === key ? 'hsl(var(--foreground))' : 'hsl(var(--muted-foreground))' }}>
               {name}
             </span>
           </span>
         ))}
+        <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+          <span className="h-px w-4 shrink-0" style={{ background: CHART_COLORS.amber }} />
+          Cost
+        </span>
       </div>
     </div>
   );

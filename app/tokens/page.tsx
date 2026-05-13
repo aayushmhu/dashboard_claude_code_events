@@ -7,9 +7,9 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { TokenTimeline } from '@/components/charts/token-timeline';
 import { ModelBreakdown } from '@/components/charts/model-breakdown';
 import { CostBreakdown } from '@/components/charts/cost-breakdown';
-import { DateRangePicker } from '@/components/date-range-picker';
-import { Coins, Zap, DollarSign, Database, TrendingUp, Sparkles } from 'lucide-react';
-import { formatTokens, formatCost, calcCost, calcCacheSavings, parseDbDate } from '@/lib/utils';
+import { ScopePicker } from '@/components/scope-picker';
+import { Coins, Zap, DollarSign, Database, TrendingUp } from 'lucide-react';
+import { formatTokens, formatCost, calcCost, formatCacheAnnotation, parseDbDate, toSqliteTimestamp } from '@/lib/utils';
 import { TokenTotals, ProjectTokenStats, ModelStats, TokenTimelinePoint } from '@/lib/types';
 import { differenceInDays } from 'date-fns';
 import { Suspense } from 'react';
@@ -17,18 +17,37 @@ import { Suspense } from 'react';
 interface SearchParams {
   start?: string;
   end?: string;
+  scope?: string;
 }
+
+// Hour/day windows for the quick scope chips. 'all' means no time filter.
+const SCOPE_MS: Record<string, number | null> = {
+  '1h':  60 * 60 * 1000,
+  '5h':  5 * 60 * 60 * 1000,
+  '24h': 24 * 60 * 60 * 1000,
+  '7d':  7 * 24 * 60 * 60 * 1000,
+  '30d': 30 * 24 * 60 * 60 * 1000,
+  'all': null,
+};
 
 async function getData(sp: SearchParams) {
   const base = process.env.NEXT_PUBLIC_APP_URL || `http://localhost:${process.env.PORT || 3000}`;
   const params = new URLSearchParams();
-  if (sp.start) params.set('start', sp.start);
-  if (sp.end) params.set('end', sp.end);
+
+  // Precedence: explicit start/end (from DateRangePicker) wins over quick scope.
+  // If neither is set, fall back to whatever scope is in the URL — or all-time.
+  if (sp.start || sp.end) {
+    if (sp.start) params.set('start', sp.start);
+    if (sp.end)   params.set('end',   sp.end);
+  } else if (sp.scope && sp.scope in SCOPE_MS && SCOPE_MS[sp.scope] !== null) {
+    const ms = SCOPE_MS[sp.scope]!;
+    params.set('start', toSqliteTimestamp(new Date(Date.now() - ms)));
+  }
   const qs = params.toString() ? `?${params}` : '';
 
   const [stats, timeline] = await Promise.all([
-    fetch(`${base}/api/tokens${qs}`, { cache: 'no-store' }).then((r) => r.json()),
-    fetch(`${base}/api/tokens/timeline?granularity=day${qs ? `&${params}` : ''}`, { cache: 'no-store' }).then((r) => r.json()),
+    fetch(`${base}/api/tokens${qs}`, { cache: 'no-store' }).then((r) => r.json()).catch(() => ({})),
+    fetch(`${base}/api/tokens/timeline?granularity=day${qs ? `&${params}` : ''}`, { cache: 'no-store' }).then((r) => r.json()).catch(() => []),
   ]);
   return {
     totals: stats.totals as TokenTotals,
@@ -44,13 +63,22 @@ export default async function TokensPage({
   searchParams: Promise<SearchParams>;
 }) {
   const sp = await searchParams;
-  const { totals, by_project, by_model, timeline } = await getData(sp);
+  const raw = await getData(sp);
+  // Active quick scope (when no custom date range is set).
+  const activeScope = (sp.start || sp.end) ? '' : (sp.scope && sp.scope in SCOPE_MS ? sp.scope : 'all');
+  const totals: TokenTotals = raw.totals ?? {
+    input_tokens: 0, output_tokens: 0, cache_write_tokens: 0, cache_read_tokens: 0,
+    total_tokens: 0, total_cost: 0, cache_efficiency: 0, first_event_at: null, last_event_at: null,
+  };
+  const by_project: ProjectTokenStats[] = raw.by_project ?? [];
+  const by_model: ModelStats[] = raw.by_model ?? [];
+  const timeline = raw.timeline ?? [];
 
-  const hasData = totals?.total_tokens > 0;
+  const hasData = totals.total_tokens > 0;
 
   // Cost forecast: extrapolate daily average to 30 days
   let forecastCard: React.ReactNode = null;
-  if (totals.first_event_at && totals.last_event_at) {
+  if (totals?.first_event_at && totals?.last_event_at) {
     const firstDate = parseDbDate(totals.first_event_at);
     const lastDate = parseDbDate(totals.last_event_at);
     const daysElapsed = Math.max(1, differenceInDays(lastDate, firstDate) + 1);
@@ -70,29 +98,21 @@ export default async function TokensPage({
     ) : null;
   }
 
-  // Cache savings
-  const cacheSavings = calcCacheSavings(totals.cache_read_tokens);
-  const cacheSavingsCard = cacheSavings > 0 ? (
-    <div className="rounded-xl border border-border bg-card px-4 py-3">
-      <div className="flex items-center gap-2 mb-1">
-        <Sparkles className="h-3.5 w-3.5 text-emerald-400" />
-        <p className="text-xs text-muted-foreground">Cache savings</p>
-      </div>
-      <p className="text-lg font-semibold text-emerald-400">{formatCost(cacheSavings)}</p>
-      <p className="text-[10px] text-muted-foreground mt-0.5">
-        {formatTokens(totals.cache_read_tokens)} cache reads at $0.30/M vs $3.00/M
-      </p>
-    </div>
-  ) : null;
+  const cacheAnnotation = formatCacheAnnotation(totals.cache_read_tokens, totals.total_cost, null);
 
   return (
     <div className="flex flex-col h-full">
       <Header title="Token Usage" />
       <div className="flex-1 px-3 py-4 sm:px-4 sm:py-5 lg:p-6 space-y-4 sm:space-y-6 overflow-y-auto">
 
-        {/* Date range picker — always visible so user can change filter and refresh */}
+        {/* Unified scope picker: quick chips + "Custom…" popover for arbitrary ranges */}
         <Suspense fallback={null}>
-          <DateRangePicker />
+          <ScopePicker
+            current={activeScope}
+            options={['1h', '5h', '24h', '7d', '30d', 'all']}
+            clearDateRange
+            customMode
+          />
         </Suspense>
 
         {!hasData && (
@@ -107,29 +127,13 @@ export default async function TokensPage({
 
         {hasData && (
         <>
-        {cacheSavings > 0 && (
-          <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-5 py-4">
-            <p className="text-[11px] font-medium text-emerald-400/70 uppercase tracking-wide mb-1">Cache savings</p>
-            <p className="text-3xl font-bold text-emerald-400">{formatCost(cacheSavings)}</p>
-            <p className="text-sm text-muted-foreground mt-1">
-              saved from cache hits — reading cached tokens costs $0.30/M vs $3/M for fresh input
-            </p>
-          </div>
-        )}
-
-        {/* Stat cards */}
-        <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
+        {/* Stat cards — single canonical "Cost" with cache annotation as secondary line */}
+        <div className="grid grid-cols-1 gap-3 sm:gap-4 sm:grid-cols-3">
           <StatCard
-            label="Total Cost"
+            label="Cost"
             value={formatCost(totals.total_cost)}
             icon={DollarSign}
-            description="all token types"
-          />
-          <StatCard
-            label="Cache Savings"
-            value={formatCost(cacheSavings)}
-            icon={Sparkles}
-            description={`${formatTokens(totals.cache_read_tokens)} reads at $0.30/M`}
+            description={cacheAnnotation ?? 'input + output + cache'}
           />
           <StatCard
             label="Cache Efficiency"
@@ -148,10 +152,10 @@ export default async function TokensPage({
         {/* Token breakdown — tokens + cost per type */}
         <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
           {[
-            { label: 'Input',       value: totals.input_tokens,       cost: calcCost(totals.input_tokens, 0, 0, 0),       color: 'text-blue-400',    rate: '$3/M' },
-            { label: 'Output',      value: totals.output_tokens,      cost: calcCost(0, totals.output_tokens, 0, 0),      color: 'text-rose-400',    rate: '$15/M' },
-            { label: 'Cache Write', value: totals.cache_write_tokens, cost: calcCost(0, 0, totals.cache_write_tokens, 0), color: 'text-amber-400',   rate: '$3.75/M' },
-            { label: 'Cache Read',  value: totals.cache_read_tokens,  cost: calcCost(0, 0, 0, totals.cache_read_tokens),  color: 'text-emerald-400', rate: '$0.30/M' },
+            { label: 'Input',       value: totals.input_tokens,       cost: calcCost(totals.input_tokens, 0, 0, 0, null),       color: 'text-blue-400',    rate: '$3/M' },
+            { label: 'Output',      value: totals.output_tokens,      cost: calcCost(0, totals.output_tokens, 0, 0, null),      color: 'text-rose-400',    rate: '$15/M' },
+            { label: 'Cache Write', value: totals.cache_write_tokens, cost: calcCost(0, 0, totals.cache_write_tokens, 0, null), color: 'text-amber-400',   rate: '$3.75/M' },
+            { label: 'Cache Read',  value: totals.cache_read_tokens,  cost: calcCost(0, 0, 0, totals.cache_read_tokens, null),  color: 'text-emerald-400', rate: '$0.30/M' },
           ].map(({ label, value, cost, color, rate }) => (
             <div key={label} className="rounded-xl border border-border bg-card px-4 py-3">
               <div className="flex items-center justify-between mb-1">
@@ -224,9 +228,8 @@ export default async function TokensPage({
                     <th className="pb-3 pr-6 font-medium text-right">Input</th>
                     <th className="pb-3 pr-6 font-medium text-right">Output</th>
                     <th className="pb-3 pr-6 font-medium text-right">Cache Read</th>
-                    <th className="pb-3 pr-6 font-medium text-right">Total</th>
-                    <th className="pb-3 pr-6 font-medium text-right">Excl. Cache</th>
-                    <th className="pb-3 font-medium text-right">Total Cost</th>
+                    <th className="pb-3 pr-6 font-medium text-right">Total tokens</th>
+                    <th className="pb-3 font-medium text-right">Cost</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -237,7 +240,6 @@ export default async function TokensPage({
                       <td className="py-3 pr-6 text-right text-muted-foreground">{formatTokens(p.output_tokens)}</td>
                       <td className="py-3 pr-6 text-right text-emerald-400">{formatTokens(p.cache_read_tokens)}</td>
                       <td className="py-3 pr-6 text-right font-medium">{formatTokens(p.total_tokens)}</td>
-                      <td className="py-3 pr-6 text-right font-medium text-blue-400">{formatCost(calcCost(p.input_tokens, p.output_tokens, 0, 0))}</td>
                       <td className="py-3 text-right font-medium text-amber-400">{formatCost(p.cost)}</td>
                     </tr>
                   ))}
@@ -249,9 +251,7 @@ export default async function TokensPage({
 
         {/* Pricing note */}
         <p className="text-xs text-muted-foreground/60 text-center pb-2">
-          Pricing: input $3/M · output $15/M · cache write $3.75/M · cache read $0.30/M (Sonnet rates) ·
-          <span className="text-blue-400/70"> Excl. Cache</span> = input + output only ·
-          <span className="text-amber-400/70"> Total Cost</span> = all token types
+          Cost = input + output + cache write + cache read (all dollars billed). Rates shown above are Sonnet defaults; Opus and Haiku are priced at their own rates per turn.
         </p>
         </>
         )}

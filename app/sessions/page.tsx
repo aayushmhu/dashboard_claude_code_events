@@ -6,6 +6,7 @@ import { SessionTable } from '@/components/session-table';
 import { Card, CardContent } from '@/components/ui/card';
 import { Session, ProjectStats } from '@/lib/types';
 import { SessionFilters } from './filters';
+import { toSqliteTimestamp } from '@/lib/utils';
 
 interface SearchParams {
   project?: string;
@@ -13,7 +14,16 @@ interface SearchParams {
   has_errors?: string;
   start?: string;
   end?: string;
+  scope?: string;
 }
+
+// Sessions-page quick scopes. No 1h/5h (per UX — they don't fit a browse page).
+const SCOPE_MS: Record<string, number | null> = {
+  '24h': 24 * 60 * 60 * 1000,
+  '7d':  7 * 24 * 60 * 60 * 1000,
+  '30d': 30 * 24 * 60 * 60 * 1000,
+  'all': null,
+};
 
 async function getData(searchParams: SearchParams) {
   const base = process.env.NEXT_PUBLIC_APP_URL || `http://localhost:${process.env.PORT || 3000}`;
@@ -21,8 +31,15 @@ async function getData(searchParams: SearchParams) {
   if (searchParams.project) params.set('project', searchParams.project);
   if (searchParams.page) params.set('page', searchParams.page);
   if (searchParams.has_errors) params.set('has_errors', searchParams.has_errors);
-  if (searchParams.start) params.set('start', searchParams.start);
-  if (searchParams.end) params.set('end', searchParams.end);
+
+  // Date filter precedence: explicit start/end (from Custom popover) → scope chip → no filter.
+  if (searchParams.start || searchParams.end) {
+    if (searchParams.start) params.set('start', searchParams.start);
+    if (searchParams.end)   params.set('end',   searchParams.end);
+  } else if (searchParams.scope && searchParams.scope in SCOPE_MS && SCOPE_MS[searchParams.scope] !== null) {
+    const ms = SCOPE_MS[searchParams.scope]!;
+    params.set('start', toSqliteTimestamp(new Date(Date.now() - ms)));
+  }
   params.set('limit', '20');
 
   const [sessionsRes, projects] = await Promise.all([

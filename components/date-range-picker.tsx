@@ -31,6 +31,8 @@ export function DateRangePicker({ className }: DateRangePickerProps) {
     if (end) params.set('end', end);
     else params.delete('end');
     params.delete('page');
+    // Picking a custom date range overrides any active quick scope.
+    params.delete('scope');
     router.push(`?${params}`);
   }
 

@@ -6,7 +6,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { ProjectStats, Session } from '@/lib/types';
 import { getProjectName } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
-import { DateRangePicker } from '@/components/date-range-picker';
+import { ScopePicker } from '@/components/scope-picker';
 import { Download } from 'lucide-react';
 
 interface SessionFiltersProps {
@@ -67,60 +67,69 @@ export function SessionFilters({ projects }: SessionFiltersProps) {
     }
   }
 
-  const hasActiveFilters = currentProject || hasErrors || searchParams.get('start') || searchParams.get('end');
+  const hasCustomRange = !!(searchParams.get('start') || searchParams.get('end'));
+  const scopeParam = searchParams.get('scope') ?? '';
+  const activeScope = hasCustomRange
+    ? ''
+    : (['24h', '7d', '30d', 'all'].includes(scopeParam) ? scopeParam : 'all');
+  const hasActiveFilters = currentProject || hasErrors || hasCustomRange || (scopeParam && scopeParam !== 'all');
 
   return (
-    <div className="flex flex-col gap-3">
-      <div className="flex items-center gap-3 flex-wrap">
-        <Select
-          value={currentProject || '__all__'}
-          onValueChange={(v) => updateFilter('project', v === '__all__' ? null : v)}
-        >
-          <SelectTrigger className="w-48">
-            <SelectValue placeholder="All projects" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="__all__">All projects</SelectItem>
-            {projects.map((p) => (
-              <SelectItem key={p.project_dir} value={p.project_dir}>
-                {getProjectName(p.project_dir)}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+    <div className="flex items-center gap-3 flex-wrap">
+      <Select
+        value={currentProject || '__all__'}
+        onValueChange={(v) => updateFilter('project', v === '__all__' ? null : v)}
+      >
+        <SelectTrigger className="w-48 h-8">
+          <SelectValue placeholder="All projects" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="__all__">All projects</SelectItem>
+          {projects.map((p) => (
+            <SelectItem key={p.project_dir} value={p.project_dir}>
+              {getProjectName(p.project_dir)}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
 
+      <Button
+        variant={hasErrors ? 'default' : 'outline'}
+        size="sm"
+        onClick={() => updateFilter('has_errors', hasErrors ? null : 'true')}
+        className="h-8"
+      >
+        Errors only
+      </Button>
+
+      <ScopePicker
+        current={activeScope}
+        options={['24h', '7d', '30d', 'all']}
+        clearDateRange
+        customMode
+      />
+
+      {hasActiveFilters && (
         <Button
-          variant={hasErrors ? 'default' : 'outline'}
+          variant="ghost"
           size="sm"
-          onClick={() => updateFilter('has_errors', hasErrors ? null : 'true')}
+          onClick={() => router.push('/sessions')}
+          className="h-8 text-muted-foreground"
         >
-          Errors only
+          Clear filters
         </Button>
+      )}
 
-        {hasActiveFilters && (
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => router.push('/sessions')}
-            className="text-muted-foreground"
-          >
-            Clear filters
-          </Button>
-        )}
-
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={handleExport}
-          disabled={exporting}
-          className="ml-auto h-7 px-2.5 text-xs gap-1.5"
-        >
-          <Download className="h-3.5 w-3.5" />
-          {exporting ? 'Exporting…' : 'Export CSV'}
-        </Button>
-      </div>
-
-      <DateRangePicker />
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={handleExport}
+        disabled={exporting}
+        className="ml-auto h-8 px-2.5 text-xs gap-1.5"
+      >
+        <Download className="h-3.5 w-3.5" />
+        {exporting ? 'Exporting…' : 'Export CSV'}
+      </Button>
     </div>
   );
 }

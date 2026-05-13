@@ -10,10 +10,17 @@ import {
   Code2,
   Terminal,
   Cpu,
+  Wrench,
+  FolderOpen,
+  TrendingUp,
+  TrendingDown,
 } from 'lucide-react';
 import { StatsOverview, Session, TokenTotals, ModelStats } from '@/lib/types';
 import { SparklineCard } from '@/components/charts/sparkline-card';
 import { HeroChart } from '@/components/charts/hero-chart';
+import { BudgetPanel } from '@/components/budget-panel';
+import { RecommendationsSection } from '@/components/recommendations-section';
+import { ScopePicker } from '@/components/scope-picker';
 
 interface EntrypointBreakdown { entrypoint: string; count: number; }
 interface TodayStats { sessions: number; cost: number; errors: number; }
@@ -27,22 +34,82 @@ interface WeekSparklinePoint {
   cache_efficiency: number;
 }
 
-import { formatCost, calcCacheSavings, formatTokens, calcCost } from '@/lib/utils';
+import { formatCost, formatTokens, calcCost, formatCacheAnnotation, toSqliteTimestamp } from '@/lib/utils';
 import Link from 'next/link';
 
-async function getData() {
-  const base = process.env.NEXT_PUBLIC_APP_URL || `http://localhost:${process.env.PORT || 3000}`;
-  const [stats, sessionsRes, tokens, heatmap] = await Promise.all([
-    fetch(`${base}/api/stats`, { cache: 'no-store' }).then((r) => r.json()).catch(() => ({})),
-    fetch(`${base}/api/sessions?limit=10`, { cache: 'no-store' }).then((r) => r.json()).catch(() => ({ sessions: [] })),
-    fetch(`${base}/api/tokens`, { cache: 'no-store' }).then((r) => r.json()).catch(() => ({ totals: null, by_model: [] })),
-    fetch(`${base}/api/activity/heatmap`, { cache: 'no-store' }).then((r) => r.json()).catch(() => []),
-  ]);
-  return { stats, sessions: sessionsRes.sessions ?? [], tokens, heatmap };
+interface Insight {
+  id: string;
+  title: string;
+  body: string;
+  saving?: string;
+  type: 'cost' | 'cache' | 'pattern';
+}
+interface InsightThresholds {
+  opus_min_turns: number;
+  opus_min_cost: number;
+  agent_min_calls: number;
+  agent_min_avg_input: number;
+  agent_max_cache_ratio: number;
+  edit_retries_min_sessions: number;
+  edit_retries_min_per_session: number;
+}
+interface DigestData {
+  week_cost: number;
+  prev_week_cost: number;
+  week_sessions: number;
+  cache_efficiency: number;
+  top_tools: { name: string; uses: number }[];
+  top_projects: { name: string; cost: number }[];
 }
 
-export default async function DashboardPage() {
-  const { stats, sessions, tokens, heatmap } = (await getData()) as {
+// Window length in milliseconds, keyed by scope. Hour-based scopes for active
+// monitoring; day-based for retrospective.
+const SCOPE_MS: Record<string, number> = {
+  '1h':  60 * 60 * 1000,
+  '5h':  5 * 60 * 60 * 1000,
+  '24h': 24 * 60 * 60 * 1000,
+  '7d':  7 * 24 * 60 * 60 * 1000,
+  '30d': 30 * 24 * 60 * 60 * 1000,
+};
+
+const SCOPE_LABELS: Record<string, { full: string; short: string; title: string }> = {
+  '1h':  { full: 'last 1 hour',   short: '1h',  title: 'Last 1h'        },
+  '5h':  { full: 'last 5 hours',  short: '5h',  title: 'Last 5h'        },
+  '24h': { full: 'last 24 hours', short: '24h', title: 'Last 24h'       },
+  '7d':  { full: 'last 7 days',   short: '7d',  title: 'Last 7 days'    },
+  '30d': { full: 'last 30 days',  short: '30d', title: 'Last 30 days'   },
+};
+
+async function getData(scopeKey: string) {
+  const base = process.env.NEXT_PUBLIC_APP_URL || `http://localhost:${process.env.PORT || 3000}`;
+  const windowMs = SCOPE_MS[scopeKey] ?? SCOPE_MS['24h'];
+  const start = toSqliteTimestamp(new Date(Date.now() - windowMs));
+  const tokensUrl = `${base}/api/tokens?start=${encodeURIComponent(start)}`;
+  const [stats, sessionsRes, tokens, heatmap, insights, settings] = await Promise.all([
+    fetch(`${base}/api/stats?scope=${scopeKey}`, { cache: 'no-store' }).then((r) => r.json()).catch(() => ({})),
+    fetch(`${base}/api/sessions?limit=10`, { cache: 'no-store' }).then((r) => r.json()).catch(() => ({ sessions: [] })),
+    fetch(tokensUrl, { cache: 'no-store' }).then((r) => r.json()).catch(() => ({ totals: null, by_model: [] })),
+    fetch(`${base}/api/activity/heatmap`, { cache: 'no-store' }).then((r) => r.json()).catch(() => []),
+    fetch(`${base}/api/insights`, { cache: 'no-store' }).then((r) => r.json()).catch(() => ({ insights: [], digest: null })),
+    fetch(`${base}/api/settings`, { cache: 'no-store' }).then((r) => r.json()).catch(() => ({})),
+  ]);
+  return { stats, sessions: sessionsRes.sessions ?? [], tokens, heatmap, insights, settings };
+}
+
+interface SearchParams { scope?: string }
+
+export default async function DashboardPage({
+  searchParams,
+}: {
+  searchParams: Promise<SearchParams>;
+}) {
+  const sp = await searchParams;
+  const scopeKey = (sp.scope && SCOPE_MS[sp.scope]) ? sp.scope : '24h';
+  const scopeLabel = SCOPE_LABELS[scopeKey].full;
+  const scopeShort = SCOPE_LABELS[scopeKey].short;
+  const scopeTitle = SCOPE_LABELS[scopeKey].title;
+
+  const { stats, sessions, tokens, heatmap, insights: insightsData, settings } = (await getData(scopeKey)) as {
     stats: StatsOverview & {
       entrypoint_breakdown?: EntrypointBreakdown[];
       today?: TodayStats;
@@ -52,7 +119,15 @@ export default async function DashboardPage() {
     sessions: Session[];
     tokens: { totals: TokenTotals; by_model: ModelStats[] };
     heatmap: { day: string; count: number }[];
+    insights: { insights: Insight[]; digest: DigestData | null; thresholds?: InsightThresholds; threshold_defaults?: InsightThresholds };
+    settings: Record<string, string>;
   };
+  const insightsList: Insight[] = insightsData?.insights ?? [];
+  const digest: DigestData | null = insightsData?.digest ?? null;
+  const thresholds = insightsData?.thresholds ?? null;
+  const thresholdDefaults = insightsData?.threshold_defaults ?? null;
+  const budgetRaw = settings?.budget_daily_usd;
+  const budget = budgetRaw ? parseFloat(budgetRaw) : null;
 
   const safeStats: StatsOverview = {
     total_sessions: stats?.total_sessions ?? 0,
@@ -66,7 +141,7 @@ export default async function DashboardPage() {
   const weekSparkline: WeekSparklinePoint[] = stats?.week_sparkline ?? [];
 
   const totals = tokens?.totals;
-  const cacheSavings = totals ? calcCacheSavings(totals.cache_read_tokens) : 0;
+  const cacheAnnotation = totals ? formatCacheAnnotation(totals.cache_read_tokens, totals.total_cost, null) : null;
   const topModel = tokens?.by_model?.find((m) => m.total_tokens > 0)?.model ?? null;
   const topModelShort = topModel ? topModel.replace('claude-', '').replace(/-\d{8}$/, '') : null;
 
@@ -100,7 +175,6 @@ export default async function DashboardPage() {
   const todayErrNum = Number(todayErrorRate);
   const yesterdayErrNum = Number(yesterdayErrorRate);
   if (yesterday.events > 0) {
-    const diff = (todayErrNum - yesterdayErrNum).toFixed(1);
     const up = todayErrNum >= yesterdayErrNum;
     errorTrend = `${up ? '↑' : '↓'} from ${yesterdayErrorRate}% yesterday`;
     errorTrendPositive = !up;
@@ -113,16 +187,20 @@ export default async function DashboardPage() {
       <Header title="Dashboard" />
       <div className="flex-1 px-3 py-4 sm:px-4 sm:py-5 lg:p-6 space-y-4 sm:space-y-6">
 
-        {/* Narrative sentence */}
-        <div className="flex items-baseline gap-2 flex-wrap">
-          <h1 className="text-xl font-semibold">
-            Last 24h: {today.sessions} session{today.sessions !== 1 ? 's' : ''}
-            {today.cost > 0 ? ` · ${formatCost(today.cost)} spent` : ''}
-            {today.errors > 0 ? ` · ${today.errors} error${today.errors !== 1 ? 's' : ''}` : ''}
-          </h1>
-          <span className="text-sm text-muted-foreground">
-            All time: {safeStats.total_sessions} sessions · {formatCost(totals?.total_cost ?? 0)}
-          </span>
+        {/* Narrative sentence + scope picker + budget */}
+        <div className="space-y-2">
+          <div className="flex items-baseline justify-between gap-3 flex-wrap">
+            <h1 className="text-xl font-semibold">
+              {scopeTitle}: {today.sessions} session{today.sessions !== 1 ? 's' : ''}
+              {today.cost > 0 ? ` · ${formatCost(today.cost)} spent` : ''}
+              {today.errors > 0 ? ` · ${today.errors} error${today.errors !== 1 ? 's' : ''}` : ''}
+            </h1>
+            <ScopePicker current={scopeKey} />
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Showing {scopeLabel} · all numbers below obey this scope unless self-labeled
+          </p>
+          <BudgetPanel todayCost={today.cost} budget={budget} />
         </div>
 
         {/* Sparkline cards */}
@@ -130,24 +208,24 @@ export default async function DashboardPage() {
           <SparklineCard
             label="Spend"
             value={formatCost(today.cost)}
-            subtitle={`${formatCost(totals?.total_cost ?? 0)} all time`}
-            trend={spendTrend}
-            trendPositive={spendTrendPositive}
+            subtitle={`${scopeShort} window · 7-day sparkline`}
+            trend={scopeKey === '24h' ? spendTrend : undefined}
+            trendPositive={scopeKey === '24h' ? spendTrendPositive : undefined}
             data={weekSparkline.map((d) => ({ v: d.cost }))}
             color="#F59E0B"
           />
           <SparklineCard
             label="Cache Efficiency"
             value={`${latestCacheEfficiency}%`}
-            subtitle={`saved ${formatCost(cacheSavings)} all time`}
+            subtitle={cacheAnnotation ?? 'no cache hits yet'}
             data={weekSparkline.map((d) => ({ v: d.cache_efficiency }))}
             color="#10B981"
           />
           <SparklineCard
             label="Error Rate"
             value={`${todayErrorRate}%`}
-            trend={errorTrend}
-            trendPositive={errorTrendPositive}
+            trend={scopeKey === '24h' ? errorTrend : undefined}
+            trendPositive={scopeKey === '24h' ? errorTrendPositive : undefined}
             data={weekSparkline.map((d) => ({
               v: d.events > 0 ? Math.round(d.errors / d.events * 1000) / 10 : 0,
             }))}
@@ -155,23 +233,103 @@ export default async function DashboardPage() {
           />
         </div>
 
-        {/* Token summary */}
+        {/* Weekly digest — self-labeled, ignores page scope on purpose (week-over-week comparison) */}
+        {digest && (
+          <div className="rounded-xl border border-border bg-card px-5 py-4">
+            <div className="flex items-baseline justify-between gap-2 mb-4">
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">This Week</p>
+              <p className="text-[10px] text-muted-foreground/60">Week over week · independent of page scope</p>
+            </div>
+            <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+              <div>
+                <p className="text-xs text-muted-foreground mb-1">Cost</p>
+                <p className="text-xl font-semibold text-amber-400">{formatCost(digest.week_cost)}</p>
+                {digest.prev_week_cost > 0 && (() => {
+                  const pct = ((digest.week_cost - digest.prev_week_cost) / digest.prev_week_cost * 100);
+                  const up = pct >= 0;
+                  return (
+                    <p className={`text-[11px] flex items-center gap-0.5 mt-0.5 ${up ? 'text-red-400' : 'text-emerald-400'}`}>
+                      {up ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
+                      {Math.abs(pct).toFixed(0)}% vs last week
+                    </p>
+                  );
+                })()}
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground mb-1">Sessions</p>
+                <p className="text-xl font-semibold">{digest.week_sessions}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground mb-1">Cache efficiency</p>
+                <p className="text-xl font-semibold text-emerald-400">{digest.cache_efficiency}%</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground mb-1">Previous week</p>
+                <p className="text-xl font-semibold text-muted-foreground">{formatCost(digest.prev_week_cost)}</p>
+              </div>
+            </div>
+            {(digest.top_tools.length > 0 || digest.top_projects.length > 0) && (
+              <div className="border-t border-border/40 mt-4 pt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+                {digest.top_tools.length > 0 && (
+                  <div>
+                    <p className="text-[11px] text-muted-foreground/70 mb-2 flex items-center gap-1.5">
+                      <Wrench className="h-3 w-3" />Top tools
+                    </p>
+                    <div className="space-y-1">
+                      {digest.top_tools.map((t) => (
+                        <div key={t.name} className="flex items-center justify-between text-xs">
+                          <span className="text-muted-foreground font-mono">{t.name}</span>
+                          <span className="font-medium">{t.uses.toLocaleString()} uses</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {digest.top_projects.length > 0 && (
+                  <div>
+                    <p className="text-[11px] text-muted-foreground/70 mb-2 flex items-center gap-1.5">
+                      <FolderOpen className="h-3 w-3" />Top projects
+                    </p>
+                    <div className="space-y-1">
+                      {digest.top_projects.map((p) => (
+                        <div key={p.name} className="flex items-center justify-between text-xs">
+                          <span className="text-muted-foreground truncate max-w-[60%]">{p.name}</span>
+                          <span className="font-medium text-amber-400">{formatCost(p.cost)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Recommendations + inline threshold tuning */}
+        {thresholds && thresholdDefaults && (
+          <RecommendationsSection
+            insights={insightsList}
+            thresholds={thresholds}
+            defaults={thresholdDefaults}
+          />
+        )}
+
+        {/* Token summary — scoped to the page's selected window */}
         {totals && totals.total_tokens > 0 && (
           <Link href="/tokens" className="block group">
             <div className="rounded-xl border border-border bg-card px-5 py-4 hover:border-primary/40 transition-colors">
               <div className="flex items-center justify-between mb-4">
-                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Token Usage</p>
-                <span className="text-xs text-muted-foreground group-hover:text-primary transition-colors">View details →</span>
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Token Usage · {scopeShort}</p>
+                <span className="text-xs text-muted-foreground group-hover:text-primary transition-colors">View all-time on /tokens →</span>
               </div>
 
-              <div className="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-4 mb-4">
+              <div className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-3 mb-4">
                 <div>
-                  <p className="text-xs text-muted-foreground mb-0.5">Total Cost</p>
+                  <p className="text-xs text-muted-foreground mb-0.5">Cost</p>
                   <p className="text-xl font-semibold text-amber-400">{formatCost(totals.total_cost)}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground mb-0.5">Cache Savings</p>
-                  <p className="text-xl font-semibold text-emerald-400">{formatCost(cacheSavings)}</p>
+                  {cacheAnnotation && (
+                    <p className="text-[10px] text-muted-foreground/70 mt-0.5">{cacheAnnotation}</p>
+                  )}
                 </div>
                 <div>
                   <p className="text-xs text-muted-foreground mb-0.5">Cache Efficiency</p>
@@ -185,10 +343,10 @@ export default async function DashboardPage() {
 
               <div className="border-t border-border/40 pt-3 grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-4">
                 {[
-                  { label: 'Input',       tokens: totals.input_tokens,        cost: calcCost(totals.input_tokens, 0, 0, 0),        rate: '$3/M',    color: 'text-blue-400' },
-                  { label: 'Output',      tokens: totals.output_tokens,       cost: calcCost(0, totals.output_tokens, 0, 0),       rate: '$15/M',   color: 'text-rose-400' },
-                  { label: 'Cache Write', tokens: totals.cache_write_tokens,  cost: calcCost(0, 0, totals.cache_write_tokens, 0),  rate: '$3.75/M', color: 'text-amber-400' },
-                  { label: 'Cache Read',  tokens: totals.cache_read_tokens,   cost: calcCost(0, 0, 0, totals.cache_read_tokens),   rate: '$0.30/M', color: 'text-emerald-400' },
+                  { label: 'Input',       tokens: totals.input_tokens,        cost: calcCost(totals.input_tokens, 0, 0, 0, null),        rate: '$3/M',    color: 'text-blue-400' },
+                  { label: 'Output',      tokens: totals.output_tokens,       cost: calcCost(0, totals.output_tokens, 0, 0, null),       rate: '$15/M',   color: 'text-rose-400' },
+                  { label: 'Cache Write', tokens: totals.cache_write_tokens,  cost: calcCost(0, 0, totals.cache_write_tokens, 0, null),  rate: '$3.75/M', color: 'text-amber-400' },
+                  { label: 'Cache Read',  tokens: totals.cache_read_tokens,   cost: calcCost(0, 0, 0, totals.cache_read_tokens, null),   rate: '$0.30/M', color: 'text-emerald-400' },
                 ].map(({ label, tokens, cost, rate, color }) => (
                   <div key={label}>
                     <div className="flex items-center gap-1.5 mb-0.5">

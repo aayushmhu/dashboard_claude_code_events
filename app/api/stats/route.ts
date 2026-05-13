@@ -14,7 +14,19 @@ const COST_SQL = `(CASE
     COALESCE(cache_creation_tokens,0)*3.75/1e6 + COALESCE(cache_read_tokens,0)*0.3/1e6
 END)`;
 
-export async function GET() {
+// Maps a scope key to a SQLite datetime modifier and a human label.
+const SCOPES: Record<string, { sql: string; label: string }> = {
+  '1h':  { sql: "datetime('now', '-1 hour')",   label: 'last 1 hour'   },
+  '5h':  { sql: "datetime('now', '-5 hours')",  label: 'last 5 hours'  },
+  '24h': { sql: "datetime('now', '-1 day')",    label: 'last 24 hours' },
+  '7d':  { sql: "datetime('now', '-7 days')",   label: 'last 7 days'   },
+  '30d': { sql: "datetime('now', '-30 days')",  label: 'last 30 days'  },
+};
+
+export async function GET(request: Request) {
+  const { searchParams } = new URL(request.url);
+  const scopeKey = searchParams.get('scope') ?? '24h';
+  const scope = SCOPES[scopeKey] ?? SCOPES['24h'];
   try {
     const [
       [[sessionRow]],
@@ -32,7 +44,7 @@ export async function GET() {
         `SELECT COALESCE(entrypoint, 'cli') AS entrypoint, COUNT(DISTINCT session_id) AS count
          FROM cc_events
          WHERE event_type = 'Stop'
-         GROUP BY entrypoint`
+         GROUP BY COALESCE(entrypoint, 'cli')`
       ),
       pool.query<RowDataPacket[]>(
         `SELECT
@@ -40,7 +52,7 @@ export async function GET() {
           COALESCE(SUM(${COST_SQL}), 0) as cost,
           COALESCE(SUM(is_error), 0) as errors
         FROM cc_events
-        WHERE timestamp >= datetime('now', '-1 day')`
+        WHERE timestamp >= ${scope.sql}`
       ),
       pool.query<RowDataPacket[]>(
         `SELECT
@@ -94,6 +106,9 @@ export async function GET() {
       active_projects: Number(projectRow.count),
       error_rate: errorRate,
       entrypoint_breakdown: entrypointBreakdown,
+      scope: { key: scopeKey, label: scope.label },
+      // `today` actually carries the selected-scope window (24h/7d/30d).
+      // Field name kept for backwards compatibility with existing dashboard code.
       today: {
         sessions: Number(todayRow.sessions),
         cost: Number(todayRow.cost),

@@ -1,10 +1,21 @@
 # Claude Code Dashboard — Phased Roadmap
 
 > Synthesized from: CEO analysis, CEO final plan, UI/UX Designer review, PM gaps (inferred).
-> Last updated: 2026-05-13
+> Last updated: 2026-05-13 (post-Phase-5 audit)
 > Rule: complete each phase before starting the next. No cherry-picking from Phase 3 before Phase 1 ships.
 
-**Status:** Phase 0 ✅ · Phase 1 ✅ · Phase 2 ✅ · Phase 3 → active
+**Status:** Phase 0 ✅ · Phase 1 ✅ · Phase 2 ✅ · Phase 3 ✅ · Phase 4 ✅ · Phase 5 ✅ (5.4 deferred)
+
+## Active right now
+- **Expand the rule library** — CEO's pushback: *"3 rules isn't a product, it's a demo. Earn the slot at 15+ rules."* We have 3 truthful rules; the next batch needs spec-driven design.
+- **Phase 2.5 — API errors lane** on `/errors` — `cc_transcript_records.record_type = 'api_error'` records exist in DB but aren't surfaced
+- **Phase 3.3 — hero chart spec match** — current chart is a single bar chart; spec calls for stacked 3-series with click-to-drill
+- **Two-Path Decision** (OSS tool vs cost-optimizer SaaS) — flagged by CEO to decide post-Phase-2; gate is met
+
+## Intentional deviations from original spec
+- **Phase 3.4 "You saved $X from cache hits"** — KILLED. The prominent cache savings banner conflated cache with separate "spend." Replaced with a single canonical **"Cost"** number everywhere, with cache framing as muted secondary text underneath (`incl. $X cache reads · saved $Y (Z% off)`). Decided by CEO/PM/UX consensus during the cost-framing audit. See [docs/insight-specs/](docs/insight-specs/) for the rule-validation discipline that emerged.
+- **Phase 5.2 weekly digest email** — REPLACED with a dashboard "This Week" card. Same content (cost vs prior week, top tools/projects, cache efficiency) but no email infrastructure required. User preference.
+- **Phase 5.3 recommendations engine** — All 3 rules **rewrote during validation** after audit revealed framing bugs (session-level → turn-level for Opus, wrong cache-ratio formula for subagent, missing time windows). Now per-rule specs in [docs/insight-specs/](docs/insight-specs/) with edge-case checklists and validation dry-runs.
 
 ---
 
@@ -109,7 +120,7 @@ The current `/chat` page does two unrelated things:
 
 ---
 
-## Phase 3 — Dashboard Narrative 🚧 ACTIVE
+## Phase 3 — Dashboard Narrative ✅ COMPLETE (with deviation)
 > **Goal:** The home page answers "what did I do, how much did it cost, what went wrong" in under 3 seconds.
 
 Currently the dashboard reads as a generic SaaS analytics page from 2019. Every datum treated as equally important. Reference: Linear's home (one panel, three numbers, activity feed).
@@ -150,7 +161,7 @@ This is the number users will open the dashboard to see every day.
 
 ---
 
-## Phase 4 — Visual System
+## Phase 4 — Visual System ✅ COMPLETE
 > **Goal:** Strip the chrome. Make every element earn its space. 30 minutes of changes, biggest feel improvement.
 
 ### 4.1 Sidebar — remove per-nav colors
@@ -194,7 +205,7 @@ Reference: Sentry's issue grouping.
 
 ---
 
-## Phase 5 — Retention & Growth
+## Phase 5 — Retention & Growth ✅ COMPLETE (5.4 deferred)
 > **Goal:** Give users a reason to come back daily and show it to colleagues.
 
 Only start this after the conversation debugger (Phase 2) is shipped and working.

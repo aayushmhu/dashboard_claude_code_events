@@ -7,18 +7,11 @@ import fs from 'fs';
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type RowDataPacket = Record<string, any>;
 
-const oldDbPath = path.join(os.homedir(), '.claude', 'dashboard.db');
 const defaultDbPath = path.join(os.homedir(), '.claude-dashboard', 'dashboard.db');
 const dbPath = process.env.DB_PATH ?? defaultDbPath;
 
-// Ensure directory exists
 const dbDir = path.dirname(dbPath);
 if (!fs.existsSync(dbDir)) fs.mkdirSync(dbDir, { recursive: true });
-
-// Migrate from old location inside ~/.claude/ if needed
-if (!fs.existsSync(dbPath) && fs.existsSync(oldDbPath)) {
-  fs.renameSync(oldDbPath, dbPath);
-}
 
 const db = new Database(dbPath);
 db.pragma('journal_mode = WAL');
@@ -74,10 +67,13 @@ export const pool = {
   ): Promise<[T, null]> => {
     const stmt = db.prepare(sql);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const rows = (params && params.length > 0
-      ? stmt.all(params as any[])
-      : stmt.all()) as unknown as T;
-    return [rows, null];
+    const args = (params ?? []) as any[];
+    // `reader` is true for statements that return rows (SELECT, etc.).
+    // INSERT/UPDATE/DELETE must use .run() — calling .all() on them throws.
+    const result = stmt.reader
+      ? (args.length > 0 ? stmt.all(args) : stmt.all())
+      : (args.length > 0 ? stmt.run(args) : stmt.run());
+    return [result as unknown as T, null];
   },
 };
 

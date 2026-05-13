@@ -57,6 +57,13 @@ export function formatTokens(n: number): string {
   return String(n);
 }
 
+// Convert a JS Date to SQLite's stored timestamp format `YYYY-MM-DD HH:MM:SS`.
+// SQLite does lexicographic string comparison on timestamp columns, so passing
+// an ISO string with 'T' and 'Z' fails — 'T' sorts higher than ' '.
+export function toSqliteTimestamp(d: Date): string {
+  return d.toISOString().slice(0, 19).replace('T', ' ');
+}
+
 export function formatCost(dollars: number): string {
   if (!dollars || dollars === 0) return '$0.00';
   if (dollars < 0.0001) return '< $0.0001';
@@ -103,12 +110,14 @@ export function getModelPricing(model: string | null | undefined): ModelPricing 
   return MODEL_PRICING.sonnet;
 }
 
+// `model` is REQUIRED to prevent silent Sonnet-fallback pricing on Opus/Haiku data.
+// Pass `null` only when the cost is intentionally a per-rate breakdown (not a real total).
 export function calcCost(
   input: number,
   output: number,
   cacheWrite: number,
   cacheRead: number,
-  model?: string | null
+  model: string | null | undefined
 ): number {
   const p = getModelPricing(model);
   return (
@@ -119,9 +128,27 @@ export function calcCost(
   );
 }
 
-export function calcCacheSavings(cacheRead: number, model?: string | null): number {
+export function calcCacheSavings(cacheRead: number, model: string | null | undefined): number {
   const p = getModelPricing(model);
   return cacheRead * (p.input - p.cache_read) / 1_000_000;
+}
+
+// Single canonical "cache annotation" string shown under any Cost figure.
+// Returns null when there's no caching to mention (keeps the UI clean).
+export function formatCacheAnnotation(
+  cacheReadTokens: number,
+  totalCost: number,
+  model: string | null | undefined,
+): string | null {
+  if (!cacheReadTokens || cacheReadTokens <= 0) return null;
+  const p = getModelPricing(model);
+  const cacheReadCost = cacheReadTokens * p.cache_read / 1_000_000;
+  const wouldHavePaid = cacheReadTokens * p.input / 1_000_000;
+  const saved = wouldHavePaid - cacheReadCost;
+  if (saved <= 0) return null;
+  const wouldBeBill = totalCost + saved;
+  const pct = wouldBeBill > 0 ? Math.round(saved / wouldBeBill * 100) : 0;
+  return `incl. ${formatCost(cacheReadCost)} cache reads · saved ${formatCost(saved)} (${pct}% off)`;
 }
 
 export function truncateId(id: string, length = 8): string {

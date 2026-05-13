@@ -12,8 +12,15 @@ function esc(s: unknown): string {
     .replace(/"/g, '&quot;');
 }
 
-function calcCost(input: number, output: number, cacheWrite: number, cacheRead: number): number {
-  return input * 3 / 1e6 + output * 15 / 1e6 + cacheWrite * 3.75 / 1e6 + cacheRead * 0.3 / 1e6;
+function getRates(model: string | null | undefined) {
+  const m = (model || '').toLowerCase();
+  if (m.includes('opus'))  return { input: 15,   output: 75,   cw: 18.75, cr: 1.50 };
+  if (m.includes('haiku')) return { input: 0.80, output: 4,    cw: 1.00,  cr: 0.08 };
+  return                          { input: 3,    output: 15,   cw: 3.75,  cr: 0.30 };
+}
+function calcCost(input: number, output: number, cacheWrite: number, cacheRead: number, model: string | null | undefined): number {
+  const r = getRates(model);
+  return input * r.input / 1e6 + output * r.output / 1e6 + cacheWrite * r.cw / 1e6 + cacheRead * r.cr / 1e6;
 }
 
 function fmtCost(d: number): string {
@@ -107,6 +114,7 @@ function renderHTML(session: RowDataPacket, events: RowDataPacket[]): string {
     Number(session.output_tokens || 0),
     Number(session.cache_creation_tokens || 0),
     Number(session.cache_read_tokens || 0),
+    (session as { model?: string | null }).model,
   ));
   const eventCount = Number(session.event_count || events.length);
 
@@ -153,7 +161,7 @@ function renderHTML(session: RowDataPacket, events: RowDataPacket[]): string {
       const agentLabel = agent ? `<span class="agent-badge">${agent}</span>` : '';
       const content = mdToHtml(String(ev.content));
       const turnCost = ev.input_tokens
-        ? fmtCost(calcCost(Number(ev.input_tokens), Number(ev.output_tokens), Number(ev.cache_creation_tokens), Number(ev.cache_read_tokens)))
+        ? fmtCost(calcCost(Number(ev.input_tokens), Number(ev.output_tokens), Number(ev.cache_creation_tokens), Number(ev.cache_read_tokens), (ev as { model?: string | null }).model))
         : null;
       rendered.push(`<div class="event assistant">
         <div class="bubble assistant-bubble">

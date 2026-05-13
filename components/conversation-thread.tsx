@@ -204,7 +204,7 @@ export function ConversationThread({ events, thinkingByEventId }: ConversationTh
                 <span className="text-[10px] text-muted-foreground/50 bg-muted/30 border border-border/20 rounded-full px-2 py-0.5 font-mono">
                   {formatTokens(event.total_tokens)} tokens
                   {event.input_tokens && event.output_tokens
-                    ? ` · ${formatCost(calcCost(event.input_tokens, event.output_tokens, event.cache_creation_tokens ?? 0, event.cache_read_tokens ?? 0))}`
+                    ? ` · ${formatCost(calcCost(event.input_tokens, event.output_tokens, event.cache_creation_tokens ?? 0, event.cache_read_tokens ?? 0, event.model))}`
                     : ''}
                 </span>
               </div>
@@ -246,7 +246,7 @@ export function ConversationThread({ events, thinkingByEventId }: ConversationTh
                 <span className="text-[10px] text-muted-foreground/50 bg-muted/30 border border-border/20 rounded-full px-2 py-0.5 font-mono">
                   {formatTokens(event.total_tokens)} tokens
                   {event.input_tokens && event.output_tokens
-                    ? ` · ${formatCost(calcCost(event.input_tokens, event.output_tokens, event.cache_creation_tokens ?? 0, event.cache_read_tokens ?? 0))}`
+                    ? ` · ${formatCost(calcCost(event.input_tokens, event.output_tokens, event.cache_creation_tokens ?? 0, event.cache_read_tokens ?? 0, event.model))}`
                     : ''}
                 </span>
               </div>

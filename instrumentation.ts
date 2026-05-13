@@ -8,19 +8,14 @@ export async function register() {
   ]);
   const { default: Database } = await import(/* webpackIgnore: true */ 'better-sqlite3');
 
-  const oldDbPath = path.join(os.homedir(), '.claude', 'dashboard.db');
   const defaultDbPath = path.join(os.homedir(), '.claude-dashboard', 'dashboard.db');
   const dbPath = process.env.DB_PATH ?? defaultDbPath;
   const migrationsDir = path.join(process.cwd(), 'migrations');
 
   if (!fs.existsSync(migrationsDir)) return;
 
-  // Migrate from old location inside ~/.claude/ if needed
   const dbDir = path.dirname(dbPath);
   if (!fs.existsSync(dbDir)) fs.mkdirSync(dbDir, { recursive: true });
-  if (!fs.existsSync(dbPath) && fs.existsSync(oldDbPath)) {
-    fs.renameSync(oldDbPath, dbPath);
-  }
 
   const db = new Database(dbPath);
   db.pragma('journal_mode = WAL');

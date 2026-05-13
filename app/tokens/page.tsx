@@ -107,6 +107,16 @@ export default async function TokensPage({
 
         {hasData && (
         <>
+        {cacheSavings > 0 && (
+          <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-5 py-4">
+            <p className="text-[11px] font-medium text-emerald-400/70 uppercase tracking-wide mb-1">Cache savings</p>
+            <p className="text-3xl font-bold text-emerald-400">{formatCost(cacheSavings)}</p>
+            <p className="text-sm text-muted-foreground mt-1">
+              saved from cache hits — reading cached tokens costs $0.30/M vs $3/M for fresh input
+            </p>
+          </div>
+        )}
+
         {/* Stat cards */}
         <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
           <StatCard

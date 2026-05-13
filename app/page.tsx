@@ -2,50 +2,54 @@ import type { Metadata } from 'next';
 import { Header } from '@/components/header';
 
 export const metadata: Metadata = { title: 'Dashboard' };
-import { StatCard } from '@/components/stat-card';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { ActivityTimeline } from '@/components/charts/activity-timeline';
-import { ToolUsageBar } from '@/components/charts/tool-usage-bar';
-import { AgentDonut } from '@/components/charts/agent-donut';
 import { ActivityHeatmap } from '@/components/charts/activity-heatmap';
 import { SessionTable } from '@/components/session-table';
 import {
-  Activity,
-  Layers,
-  FolderOpen,
-  AlertTriangle,
-  Terminal,
   Monitor,
   Code2,
+  Terminal,
   Cpu,
 } from 'lucide-react';
-import { StatsOverview, TimelinePoint, ToolStats, AgentStats, Session, TokenTotals, ModelStats } from '@/lib/types';
+import { StatsOverview, Session, TokenTotals, ModelStats } from '@/lib/types';
+import { SparklineCard } from '@/components/charts/sparkline-card';
+import { HeroChart } from '@/components/charts/hero-chart';
 
 interface EntrypointBreakdown { entrypoint: string; count: number; }
-import { formatTokens, formatCost, calcCost, calcCacheSavings } from '@/lib/utils';
+interface TodayStats { sessions: number; cost: number; errors: number; }
+interface YesterdayStats { cost: number; errors: number; events: number; }
+interface WeekSparklinePoint {
+  day: string;
+  cost: number;
+  events: number;
+  errors: number;
+  tool_calls: number;
+  cache_efficiency: number;
+}
+
+import { formatCost, calcCacheSavings, formatTokens, calcCost } from '@/lib/utils';
 import Link from 'next/link';
 
 async function getData() {
   const base = process.env.NEXT_PUBLIC_APP_URL || `http://localhost:${process.env.PORT || 3000}`;
-  const [stats, timeline, tools, sessionsRes, agents, tokens, heatmap] = await Promise.all([
+  const [stats, sessionsRes, tokens, heatmap] = await Promise.all([
     fetch(`${base}/api/stats`, { cache: 'no-store' }).then((r) => r.json()).catch(() => ({})),
-    fetch(`${base}/api/events/timeline?days=7`, { cache: 'no-store' }).then((r) => r.json()).catch(() => []),
-    fetch(`${base}/api/tools`, { cache: 'no-store' }).then((r) => r.json()).catch(() => []),
     fetch(`${base}/api/sessions?limit=10`, { cache: 'no-store' }).then((r) => r.json()).catch(() => ({ sessions: [] })),
-    fetch(`${base}/api/agents`, { cache: 'no-store' }).then((r) => r.json()).catch(() => []),
     fetch(`${base}/api/tokens`, { cache: 'no-store' }).then((r) => r.json()).catch(() => ({ totals: null, by_model: [] })),
     fetch(`${base}/api/activity/heatmap`, { cache: 'no-store' }).then((r) => r.json()).catch(() => []),
   ]);
-  return { stats, timeline, tools, sessions: sessionsRes.sessions ?? [], agents, tokens, heatmap };
+  return { stats, sessions: sessionsRes.sessions ?? [], tokens, heatmap };
 }
 
 export default async function DashboardPage() {
-  const { stats, timeline, tools, sessions, agents, tokens, heatmap } = (await getData()) as {
-    stats: StatsOverview & { entrypoint_breakdown?: EntrypointBreakdown[] };
-    timeline: TimelinePoint[];
-    tools: ToolStats[];
+  const { stats, sessions, tokens, heatmap } = (await getData()) as {
+    stats: StatsOverview & {
+      entrypoint_breakdown?: EntrypointBreakdown[];
+      today?: TodayStats;
+      yesterday?: YesterdayStats;
+      week_sparkline?: WeekSparklinePoint[];
+    };
     sessions: Session[];
-    agents: AgentStats[];
     tokens: { totals: TokenTotals; by_model: ModelStats[] };
     heatmap: { day: string; count: number }[];
   };
@@ -56,42 +60,98 @@ export default async function DashboardPage() {
     active_projects: stats?.active_projects ?? 0,
     error_rate: stats?.error_rate ?? 0,
   };
-  const errorRateColor = safeStats.error_rate > 5 ? 'text-destructive' : undefined;
+
+  const today: TodayStats = stats?.today ?? { sessions: 0, cost: 0, errors: 0 };
+  const yesterday: YesterdayStats = stats?.yesterday ?? { cost: 0, errors: 0, events: 0 };
+  const weekSparkline: WeekSparklinePoint[] = stats?.week_sparkline ?? [];
+
   const totals = tokens?.totals;
   const cacheSavings = totals ? calcCacheSavings(totals.cache_read_tokens) : 0;
   const topModel = tokens?.by_model?.find((m) => m.total_tokens > 0)?.model ?? null;
   const topModelShort = topModel ? topModel.replace('claude-', '').replace(/-\d{8}$/, '') : null;
 
+  const latestDayWithData = weekSparkline.filter((d) => d.events > 0).slice(-1)[0];
+  const latestCacheEfficiency = latestDayWithData ? latestDayWithData.cache_efficiency.toFixed(1) : '0.0';
+
+  const todayEvents = weekSparkline.find((d) => d.errors !== undefined)
+    ? weekSparkline.reduce((sum, d) => sum + d.events, 0)
+    : 0;
+  const todayErrorEvents = today.errors;
+  const todayTotalEvents = weekSparkline[weekSparkline.length - 1]?.events ?? 0;
+  const todayErrorRate = todayTotalEvents > 0
+    ? (todayErrorEvents / todayTotalEvents * 100).toFixed(1)
+    : '0.0';
+
+  const yesterdayErrorRate = yesterday.events > 0
+    ? (Number(yesterday.errors) / Number(yesterday.events) * 100).toFixed(1)
+    : '0.0';
+
+  let spendTrend: string | undefined;
+  let spendTrendPositive: boolean | undefined;
+  if (yesterday.cost > 0) {
+    const pct = ((today.cost - yesterday.cost) / yesterday.cost * 100).toFixed(0);
+    const up = today.cost >= yesterday.cost;
+    spendTrend = `${up ? '↑' : '↓'} ${Math.abs(Number(pct))}% from yesterday`;
+    spendTrendPositive = !up;
+  }
+
+  let errorTrend: string | undefined;
+  let errorTrendPositive: boolean | undefined;
+  const todayErrNum = Number(todayErrorRate);
+  const yesterdayErrNum = Number(yesterdayErrorRate);
+  if (yesterday.events > 0) {
+    const diff = (todayErrNum - yesterdayErrNum).toFixed(1);
+    const up = todayErrNum >= yesterdayErrNum;
+    errorTrend = `${up ? '↑' : '↓'} from ${yesterdayErrorRate}% yesterday`;
+    errorTrendPositive = !up;
+  }
+
+  void todayEvents;
+
   return (
     <div className="flex flex-col h-full">
       <Header title="Dashboard" />
       <div className="flex-1 px-3 py-4 sm:px-4 sm:py-5 lg:p-6 space-y-4 sm:space-y-6">
-        {/* Stat cards */}
-        <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
-          <StatCard
-            label="Total Sessions"
-            value={safeStats.total_sessions}
-            icon={Activity}
-            description="All time"
+
+        {/* Narrative sentence */}
+        <div className="flex items-baseline gap-2 flex-wrap">
+          <h1 className="text-xl font-semibold">
+            Last 24h: {today.sessions} session{today.sessions !== 1 ? 's' : ''}
+            {today.cost > 0 ? ` · ${formatCost(today.cost)} spent` : ''}
+            {today.errors > 0 ? ` · ${today.errors} error${today.errors !== 1 ? 's' : ''}` : ''}
+          </h1>
+          <span className="text-sm text-muted-foreground">
+            All time: {safeStats.total_sessions} sessions · {formatCost(totals?.total_cost ?? 0)}
+          </span>
+        </div>
+
+        {/* Sparkline cards */}
+        <div className="grid grid-cols-1 gap-3 sm:gap-4 lg:grid-cols-3">
+          <SparklineCard
+            label="Spend"
+            value={formatCost(today.cost)}
+            subtitle={`${formatCost(totals?.total_cost ?? 0)} all time`}
+            trend={spendTrend}
+            trendPositive={spendTrendPositive}
+            data={weekSparkline.map((d) => ({ v: d.cost }))}
+            color="#F59E0B"
           />
-          <StatCard
-            label="Total Events"
-            value={safeStats.total_events.toLocaleString()}
-            icon={Layers}
-            description="All event types"
+          <SparklineCard
+            label="Cache Efficiency"
+            value={`${latestCacheEfficiency}%`}
+            subtitle={`saved ${formatCost(cacheSavings)} all time`}
+            data={weekSparkline.map((d) => ({ v: d.cache_efficiency }))}
+            color="#10B981"
           />
-          <StatCard
-            label="Active Projects"
-            value={safeStats.active_projects}
-            icon={FolderOpen}
-            description="Distinct project directories"
-          />
-          <StatCard
+          <SparklineCard
             label="Error Rate"
-            value={`${safeStats.error_rate}%`}
-            icon={AlertTriangle}
-            description="of all events"
-            valueClassName={errorRateColor}
+            value={`${todayErrorRate}%`}
+            trend={errorTrend}
+            trendPositive={errorTrendPositive}
+            data={weekSparkline.map((d) => ({
+              v: d.events > 0 ? Math.round(d.errors / d.events * 1000) / 10 : 0,
+            }))}
+            color="#EF4444"
           />
         </div>
 
@@ -104,7 +164,6 @@ export default async function DashboardPage() {
                 <span className="text-xs text-muted-foreground group-hover:text-primary transition-colors">View details →</span>
               </div>
 
-              {/* Summary row */}
               <div className="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-4 mb-4">
                 <div>
                   <p className="text-xs text-muted-foreground mb-0.5">Total Cost</p>
@@ -124,7 +183,6 @@ export default async function DashboardPage() {
                 </div>
               </div>
 
-              {/* Cost-by-type breakdown */}
               <div className="border-t border-border/40 pt-3 grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-4">
                 {[
                   { label: 'Input',       tokens: totals.input_tokens,        cost: calcCost(totals.input_tokens, 0, 0, 0),        rate: '$3/M',    color: 'text-blue-400' },
@@ -195,26 +253,15 @@ export default async function DashboardPage() {
           );
         })()}
 
-        {/* Charts row */}
-        <div className="grid grid-cols-1 gap-3 sm:gap-4 lg:grid-cols-3">
-          <Card className="lg:col-span-2">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium">Activity — Last 7 Days</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <ActivityTimeline data={timeline} />
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium">Tool Usage</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <ToolUsageBar data={tools} />
-            </CardContent>
-          </Card>
-        </div>
+        {/* Hero chart — Activity Last 7 Days */}
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium">Activity — Last 7 Days</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <HeroChart data={weekSparkline} />
+          </CardContent>
+        </Card>
 
         {/* Activity heatmap */}
         <Card>
@@ -226,26 +273,15 @@ export default async function DashboardPage() {
           </CardContent>
         </Card>
 
-        {/* Bottom row */}
-        <div className="grid grid-cols-1 gap-3 sm:gap-4 xl:grid-cols-3">
-          <Card className="xl:col-span-2">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium">Recent Sessions</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <SessionTable sessions={sessions} hideTools />
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium">Agent Breakdown</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <AgentDonut data={agents} />
-            </CardContent>
-          </Card>
-        </div>
+        {/* Recent Sessions */}
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium">Recent Sessions</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <SessionTable sessions={sessions} hideTools />
+          </CardContent>
+        </Card>
       </div>
     </div>
   );

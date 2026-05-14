@@ -4,23 +4,25 @@ import { RowDataPacket } from '@/lib/db';
 
 const COST_SQL = `(CASE
   WHEN model LIKE '%opus%' THEN
-    COALESCE(input_tokens,0)*15/1e6 + COALESCE(output_tokens,0)*75/1e6 +
-    COALESCE(cache_creation_tokens,0)*18.75/1e6 + COALESCE(cache_read_tokens,0)*1.5/1e6
+    COALESCE(input_tokens,0)*5/1e6 + COALESCE(output_tokens,0)*25/1e6 +
+    COALESCE(cache_creation_tokens,0)*10/1e6 + COALESCE(cache_read_tokens,0)*0.5/1e6
   WHEN model LIKE '%haiku%' THEN
-    COALESCE(input_tokens,0)*0.8/1e6 + COALESCE(output_tokens,0)*4/1e6 +
-    COALESCE(cache_creation_tokens,0)*1/1e6 + COALESCE(cache_read_tokens,0)*0.08/1e6
+    COALESCE(input_tokens,0)*1/1e6 + COALESCE(output_tokens,0)*5/1e6 +
+    COALESCE(cache_creation_tokens,0)*2/1e6 + COALESCE(cache_read_tokens,0)*0.1/1e6
   ELSE
     COALESCE(input_tokens,0)*3/1e6 + COALESCE(output_tokens,0)*15/1e6 +
-    COALESCE(cache_creation_tokens,0)*3.75/1e6 + COALESCE(cache_read_tokens,0)*0.3/1e6
+    COALESCE(cache_creation_tokens,0)*6/1e6 + COALESCE(cache_read_tokens,0)*0.3/1e6
 END)`;
 
 // Maps a scope key to a SQLite datetime modifier and a human label.
+// 'all' uses a sentinel pre-epoch timestamp so the WHERE clause matches every row.
 const SCOPES: Record<string, { sql: string; label: string }> = {
   '1h':  { sql: "datetime('now', '-1 hour')",   label: 'last 1 hour'   },
   '5h':  { sql: "datetime('now', '-5 hours')",  label: 'last 5 hours'  },
   '24h': { sql: "datetime('now', '-1 day')",    label: 'last 24 hours' },
   '7d':  { sql: "datetime('now', '-7 days')",   label: 'last 7 days'   },
   '30d': { sql: "datetime('now', '-30 days')",  label: 'last 30 days'  },
+  'all': { sql: "'1970-01-01 00:00:00'",         label: 'all time'      },
 };
 
 export async function GET(request: Request) {
@@ -36,6 +38,7 @@ export async function GET(request: Request) {
       [[todayRow]],
       [[yesterdayRow]],
       [weekRows],
+      [[prevWeekRow]],
     ] = await Promise.all([
       pool.query<RowDataPacket[]>('SELECT COUNT(*) as count FROM cc_sessions'),
       pool.query<RowDataPacket[]>('SELECT COUNT(*) as total, COALESCE(SUM(is_error), 0) as errors FROM cc_events'),
@@ -76,6 +79,16 @@ export async function GET(request: Request) {
         WHERE timestamp >= datetime('now', '-7 days')
         GROUP BY date(timestamp)
         ORDER BY day ASC`
+      ),
+      // Prior 7-day totals (days 8–14 ago) for the hero chart's week-over-week delta
+      pool.query<RowDataPacket[]>(
+        `SELECT
+          COUNT(*) as events,
+          COALESCE(SUM(is_error), 0) as errors,
+          COALESCE(SUM(CASE WHEN event_type IN ('PreToolUse','PostToolUse') THEN 1 ELSE 0 END), 0) as tool_calls
+        FROM cc_events
+        WHERE timestamp >= datetime('now', '-14 days')
+          AND timestamp <  datetime('now', '-7 days')`
       ),
     ]);
 
@@ -120,6 +133,11 @@ export async function GET(request: Request) {
         events: Number(yesterdayRow.events),
       },
       week_sparkline: weekSparkline,
+      prev_week_total: {
+        events: Number(prevWeekRow?.events ?? 0),
+        errors: Number(prevWeekRow?.errors ?? 0),
+        tool_calls: Number(prevWeekRow?.tool_calls ?? 0),
+      },
     });
   } catch (error) {
     console.error('Stats error:', error);

@@ -14,13 +14,14 @@ export interface ClaudeOptions {
 }
 
 export function buildClaudeArgs(options: ClaudeOptions): string[] {
-  const hasImages = !!options.images?.length;
-
-  // With images: use --input-format stream-json and pipe content blocks via stdin.
-  // Without images: standard -p <prompt> (original behaviour).
-  const args: string[] = hasImages
-    ? ['--print', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose']
-    : ['-p', options.prompt, '--output-format', 'stream-json', '--verbose'];
+  // Always use stream-json bidirectional mode so we can send follow-up
+  // messages (e.g., tool_result for AskUserQuestion) to the running CLI.
+  const args: string[] = [
+    '--print',
+    '--input-format', 'stream-json',
+    '--output-format', 'stream-json',
+    '--verbose',
+  ];
 
   if (options.sessionId) args.push('--resume', options.sessionId);
 
@@ -38,10 +39,14 @@ export function buildClaudeArgs(options: ClaudeOptions): string[] {
   return args;
 }
 
-export function streamClaude(options: ClaudeOptions): {
+export interface StreamHandle {
   stream: ReadableStream<Uint8Array>;
   process: ChildProcess;
-} {
+  /** Send a follow-up user message (content blocks) to the running subprocess. */
+  sendUserMessage: (content: unknown[]) => void;
+}
+
+export function streamClaude(options: ClaudeOptions): StreamHandle {
   const args = buildClaudeArgs(options);
   const proc = spawn('claude', args, {
     cwd: options.cwd,
@@ -80,9 +85,9 @@ export function streamClaude(options: ClaudeOptions): {
     },
   });
 
+  // Build initial user message content blocks
+  const contentBlocks: unknown[] = [{ type: 'text', text: options.prompt }];
   if (options.images?.length) {
-    // Build Anthropic content blocks and write as a single stream-json message
-    const contentBlocks: unknown[] = [{ type: 'text', text: options.prompt }];
     for (const img of options.images) {
       const base64 = img.data.replace(/^data:[^;]+;base64,/, '');
       contentBlocks.push({
@@ -90,12 +95,22 @@ export function streamClaude(options: ClaudeOptions): {
         source: { type: 'base64', media_type: img.mimeType, data: base64 },
       });
     }
-    proc.stdin.write(
-      JSON.stringify({ type: 'user', message: { role: 'user', content: contentBlocks } }) + '\n',
-    );
   }
 
-  proc.stdin.end();
+  // Helper to write a stream-json user message to stdin
+  const sendUserMessage = (content: unknown[]) => {
+    if (proc.killed || !proc.stdin.writable) return;
+    proc.stdin.write(
+      JSON.stringify({ type: 'user', message: { role: 'user', content } }) + '\n',
+    );
+  };
 
-  return { stream, process: proc };
+  // Send the initial user turn
+  sendUserMessage(contentBlocks);
+
+  // IMPORTANT: do NOT close stdin here — keep it open so follow-up tool_result
+  // and user messages can be written by /api/chat/respond throughout the session.
+  // Stdin is closed when the subprocess exits (auto) or when the request is cancelled.
+
+  return { stream, process: proc, sendUserMessage };
 }

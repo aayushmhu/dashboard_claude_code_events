@@ -13,6 +13,41 @@ type Thresholds = {
   agent_max_cache_ratio: number;
   edit_retries_min_sessions: number;
   edit_retries_min_per_session: number;
+  // Long-running tools
+  long_tool_min_calls: number;
+  long_tool_min_duration_ms: number;
+  // Daily cost spike
+  cost_spike_ratio: number;
+  cost_spike_min_baseline: number;
+  // Opus verbose output
+  opus_verbose_min_turns: number;
+  opus_verbose_ratio: number;
+  // File-read thrashing
+  read_thrash_min_per_session: number;
+  read_thrash_min_sessions: number;
+  // Cache write without read
+  cache_write_no_read_min_sessions: number;
+  // Tool error retry loops
+  retry_loop_min_sessions: number;
+  retry_loop_min_consecutive: number;
+  // Prompt caching not enabled
+  no_caching_min_sessions: number;
+  no_caching_min_input: number;
+  // Subagent explosion
+  subagent_explosion_min_sessions: number;
+  subagent_explosion_min_calls: number;
+  // Daily volume anomaly
+  volume_spike_ratio: number;
+  volume_spike_min_baseline: number;
+  // High tool error rate
+  high_error_min_sessions: number;
+  high_error_min_tool_calls: number;
+  high_error_rate_threshold: number;
+  // Opus on research tasks
+  opus_research_min_sessions: number;
+  opus_research_min_tools: number;
+  // Opus tiny output
+  opus_small_min_turns: number;
 };
 
 interface Insight {
@@ -35,13 +70,51 @@ interface Props {
 }
 
 const FIELDS: { key: keyof Thresholds; label: string; hint: string; step: number; suffix?: string }[] = [
+  // Opus trivial tools
   { key: 'opus_min_turns',               label: 'Opus min turns',            hint: 'Min Opus turns running only trivial tools',     step: 1 },
   { key: 'opus_min_cost',                label: 'Opus min cost ($)',         hint: 'Min total Opus cost of those turns',            step: 0.01, suffix: '$' },
+  // Subagent cache miss
   { key: 'agent_min_calls',              label: 'Subagent min calls',        hint: 'Min subagent calls in last 30 days',            step: 1 },
   { key: 'agent_min_avg_input',          label: 'Subagent min avg input',    hint: 'Min avg input tokens per subagent call',        step: 1000 },
   { key: 'agent_max_cache_ratio',        label: 'Subagent max cache ratio',  hint: 'Cache reuse below this triggers warning (0–1)', step: 0.05 },
+  // Edit retries
   { key: 'edit_retries_min_sessions',    label: 'Edit retries min sessions', hint: 'Min sessions with repeated edit failures',      step: 1 },
   { key: 'edit_retries_min_per_session', label: 'Edit failures per session', hint: 'Min failed edits to flag a session',            step: 1 },
+  // Long-running tools
+  { key: 'long_tool_min_calls',          label: 'Slow tool min calls',       hint: 'Min slow tool calls before flagging',           step: 1 },
+  { key: 'long_tool_min_duration_ms',    label: 'Slow tool threshold (ms)',  hint: 'A tool call slower than this counts as "slow"', step: 1000 },
+  // Daily cost spike
+  { key: 'cost_spike_ratio',             label: 'Cost spike ratio',          hint: 'Day must cost ≥ this × the 7-day avg',          step: 0.5 },
+  { key: 'cost_spike_min_baseline',      label: 'Cost spike floor ($)',      hint: 'Ignore spikes when daily cost is below this',   step: 0.10, suffix: '$' },
+  // Opus verbose output
+  { key: 'opus_verbose_min_turns',       label: 'Opus verbose min turns',    hint: 'Min verbose Opus turns to flag',                step: 1 },
+  { key: 'opus_verbose_ratio',           label: 'Output:input ratio',        hint: 'Output ≥ this × input counts as verbose',       step: 0.5 },
+  // File-read thrashing
+  { key: 'read_thrash_min_per_session',  label: 'Read thrash per session',   hint: 'Min Reads of the same file in one session',     step: 1 },
+  { key: 'read_thrash_min_sessions',     label: 'Read thrash min sessions',  hint: 'Min sessions hitting the thrashing pattern',    step: 1 },
+  // Cache write without read
+  { key: 'cache_write_no_read_min_sessions', label: 'Cache-waste min sessions', hint: 'Min sessions that wrote cache but never read it', step: 1 },
+  // Retry loops
+  { key: 'retry_loop_min_sessions',      label: 'Retry-loop min sessions',   hint: 'Min sessions exhibiting a same-tool retry loop', step: 1 },
+  { key: 'retry_loop_min_consecutive',   label: 'Retry-loop min consecutive',hint: 'Min consecutive failures to count as a loop',   step: 1 },
+  // Prompt caching not enabled
+  { key: 'no_caching_min_sessions',      label: 'No-cache min sessions',     hint: 'Min sessions with zero cache_creation/read',    step: 1 },
+  { key: 'no_caching_min_input',         label: 'No-cache min input',        hint: 'Min fresh input tokens to count the session',   step: 5000 },
+  // Subagent explosion
+  { key: 'subagent_explosion_min_sessions', label: 'Subagent-storm min sessions', hint: 'Min sessions calling Agent N+ times',     step: 1 },
+  { key: 'subagent_explosion_min_calls', label: 'Subagent-storm min calls',  hint: 'Min Agent calls per session to flag',           step: 5 },
+  // Daily volume anomaly
+  { key: 'volume_spike_ratio',           label: 'Volume spike ratio',        hint: 'Day must exceed this × 7-day avg events',       step: 0.5 },
+  { key: 'volume_spike_min_baseline',    label: 'Volume spike floor',        hint: 'Ignore spikes when daily event count is below', step: 10 },
+  // High tool error rate
+  { key: 'high_error_min_sessions',      label: 'High-error min sessions',   hint: 'Min sessions with high error rate',             step: 1 },
+  { key: 'high_error_min_tool_calls',    label: 'High-error min tool calls', hint: 'Min tool calls per session to evaluate',        step: 1 },
+  { key: 'high_error_rate_threshold',    label: 'High-error rate',           hint: 'Error rate above this flags the session (0–1)', step: 0.05 },
+  // Opus on research tasks
+  { key: 'opus_research_min_sessions',   label: 'Opus-research min sessions',hint: 'Min Opus sessions doing research-only work',    step: 1 },
+  { key: 'opus_research_min_tools',      label: 'Opus-research min tools',   hint: 'Min tool calls per session to count',           step: 1 },
+  // Opus tiny output
+  { key: 'opus_small_min_turns',         label: 'Opus tiny-output min turns',hint: 'Min Opus turns with tiny output to flag',       step: 1 },
 ];
 
 export function RecommendationsSection({ insights, thresholds, defaults }: Props) {

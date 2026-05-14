@@ -37,6 +37,13 @@ export const TOOL_COLORS: Record<string, string> = {
   AskUserQuestion: '#3B82F6',
   TeamCreate:      '#8B5CF6',
   TaskOutput:      '#7C3AED',
+  WebFetch:        '#3B82F6',
+  WebSearch:       '#EC4899',
+  Monitor:         '#F59E0B',
+  TaskStop:        '#EF4444',
+  NotebookEdit:    '#F97316',
+  PushNotification:'#F59E0B',
+  CronCreate:      '#8B5CF6',
 };
 
 // Token breakdown colors — used in token usage charts, cost estimation
@@ -69,6 +76,48 @@ export const BUBBLE_COLORS: Record<string, { bg: string; border: string }> = {
 
 export function getToolColor(toolName: string): string {
   return TOOL_COLORS[toolName] || '#64748B';
+}
+
+// Short descriptions for tooltip surfaces. Two-line max so they fit in a
+// max-w-xs tooltip without being intimidating. Each one tries to answer "what
+// does it do AND when would I reach for it?" — the one-liners they replaced
+// were too tautological ("Read reads files") to actually teach anything.
+export const TOOL_DESCRIPTIONS: Record<string, string> = {
+  Read:            'Loads a file from disk into context — text, images, PDFs, or notebooks. Always read before editing rather than guessing the contents.',
+  Write:           'Creates a new file or overwrites an existing one wholesale. For partial changes prefer Edit; Write replaces the entire file.',
+  Edit:            'Replaces an exact string in an existing file. The old text must be unique in the file or the edit fails — read first when in doubt.',
+  Bash:            'Executes a shell command in the project directory. Used for git, npm, builds, tests; returns stdout and stderr.',
+  Glob:            'Lists files matching a glob pattern like **/*.tsx. Best for "find every file of type X" — results are ordered by modification time.',
+  Grep:            'Searches file contents with regex across the repo (ripgrep under the hood). Supports glob, path, and type filters to narrow scope.',
+  Agent:           'Spawns a subagent (Explore, Plan, general-purpose) for an isolated sub-task. The subagent runs with its own context — keeps the parent lean.',
+  Skill:           'Invokes a built-in slash command from inside the conversation (e.g. /loop, /schedule). The skill prompt is loaded and executed in-context.',
+  TaskCreate:      'Creates a long-running background task that an agent works on asynchronously. Returns a task_id you can poll with TaskOutput.',
+  TaskUpdate:      'Changes a running task’s status, priority, or dependencies without restarting it. Useful for pausing, reordering, or linking work.',
+  TaskOutput:      'Reads progress or final output of a background task by task_id. Can block until the task finishes or return current state immediately.',
+  TaskStop:        'Cancels a running background task by task_id. Use when a task is no longer needed or has stalled.',
+  TodoWrite:       'Updates the agent’s current todo list, shown as a checklist in the UI. Use for multi-step tasks to track progress visibly for the user.',
+  ToolSearch:      'Looks up deferred tool schemas by name or keyword. Used to fetch a tool’s signature before calling it for the first time.',
+  SendMessage:     'Sends a message to another agent in the same team — agent-to-agent communication for coordinated multi-agent work.',
+  TeamCreate:      'Spins up a new multi-agent team with a designated lead. The lead orchestrates; sub-agents do specialized work.',
+  AskUserQuestion: 'Pauses the agent to ask the user a structured question with options. Supports single- or multi-select and free-text "Other".',
+  WebFetch:        'Downloads a URL and extracts relevant content using a focused prompt. Returns markdown — cleaner than dumping raw HTML.',
+  WebSearch:       'Runs a web search and returns ranked links plus an AI-written summary. Can be restricted to specific domains via allowed_domains.',
+  Monitor:         'Runs a shell command in the background while streaming its output back. Use for tail-style watches or periodic process checks.',
+  NotebookEdit:    'Adds, modifies, or deletes a single cell in a Jupyter notebook (.ipynb). Preserves outputs in untouched cells.',
+  EnterPlanMode:   'Switches the session into plan mode — research and propose changes without touching files. Exit with a written plan for approval.',
+  ExitPlanMode:    'Leaves plan mode by presenting the user with the proposed changes for approval before any files are written.',
+  EnterWorktree:   'Creates an isolated git worktree on a separate branch so the agent can work without affecting the main checkout.',
+  ExitWorktree:    'Leaves a git worktree, optionally deleting the branch. If changes were made, the worktree path and branch are returned.',
+  ScheduleWakeup:  'Schedules when the next /loop iteration should fire. Used in dynamic-paced loops to self-throttle without polling.',
+  CronCreate:      'Schedules a recurring agent run on a cron expression. The agent fires at the scheduled time with the prompt you provide.',
+  CronList:        'Lists every cron job currently scheduled for this user, with their next firing time and last run status.',
+  CronDelete:      'Permanently deletes a scheduled cron job by id. There is no recovery — the job stops firing immediately.',
+  RemoteTrigger:   'Creates, lists, or deletes remote triggers — webhooks that fire an agent on external events via the claude.ai API.',
+  PushNotification:'Pushes a notification to the user’s device — useful when long-running work finishes or needs attention.',
+};
+
+export function getToolDescription(toolName: string): string | undefined {
+  return TOOL_DESCRIPTIONS[toolName];
 }
 
 export function getEventColor(eventType: string): string {

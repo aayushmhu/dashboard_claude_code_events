@@ -16,6 +16,7 @@ import {
   MessageSquare,
   Menu,
   X,
+  DollarSign,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useState, useEffect } from 'react';
@@ -30,6 +31,7 @@ const navItems = [
   { href: '/tools',         label: 'Tools',         icon: Wrench },
   { href: '/tokens',        label: 'Tokens',        icon: Coins },
   { href: '/errors',        label: 'Errors',        icon: AlertCircle },
+  { href: '/model-pricing', label: 'Model Pricing', icon: DollarSign },
 ];
 
 export function HamburgerButton({ onClick }: { onClick: () => void }) {

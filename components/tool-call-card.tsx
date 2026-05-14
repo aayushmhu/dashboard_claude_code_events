@@ -5,10 +5,12 @@ import {
   File, Eye, Terminal, FolderSearch, Search, Bot, Slash,
   PlusCircle, RefreshCw, ListChecks, Wrench, Pencil,
   ChevronDown, ChevronRight, Check, X, Copy,
-  Mail, HelpCircle, UsersRound, ClipboardCheck,
+  Mail, HelpCircle, UsersRound, ClipboardCheck, Globe, Activity, CircleStop, BookOpen,
+  Bell, Clock,
 } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
 import { TOOL_COLORS, getAgentColor } from '@/lib/colors';
-import { getFileName, getLanguageLabel, formatDurationMs, formatAgentName } from '@/lib/utils';
+import { getFileName, getLanguageLabel, formatDurationMs, formatAgentName, formatRelativeTime } from '@/lib/utils';
 
 interface ToolCallCardProps {
   toolName: string;
@@ -17,6 +19,8 @@ interface ToolCallCardProps {
   isError: boolean;
   errorMessage: string | null;
   timestamp: string;
+  /** Optional callback when the user picks an option on an interactive tool (currently AskUserQuestion only). */
+  onAnswerQuestion?: (answer: string) => void;
 }
 
 interface ToolProps {
@@ -24,6 +28,7 @@ interface ToolProps {
   output: Record<string, unknown> | null;
   isError: boolean;
   errorMessage: string | null;
+  onAnswerQuestion?: (answer: string) => void;
 }
 
 // ─── Primitives ───────────────────────────────────────────────────────────────
@@ -937,11 +942,21 @@ function renderQuestion(q: QuestionItem): { text: string; header?: string; optio
   };
 }
 
-function AskUserQuestionTool({ input, output, isError, errorMessage }: ToolProps) {
+function AskUserQuestionTool({ input, output, isError, errorMessage, onAnswerQuestion }: ToolProps) {
   const [open, setOpen] = useState(true);
+  // Per-question, the option the user clicked (so we can dim the others without
+  // waiting for the network roundtrip). Resets when a fresh tool call mounts.
+  const [picked, setPicked] = useState<Record<number, string>>({});
   const color = TOOL_COLORS.AskUserQuestion;
   const rawQuestions = ((output?.questions ?? input?.questions) as QuestionItem[]) || [];
   const answers: Record<string, string> = ((output?.answers ?? input?.answers) as Record<string, string>) || {};
+  const interactive = !!onAnswerQuestion;
+
+  const onPick = (qIdx: number, optLabel: string) => {
+    if (!onAnswerQuestion || picked[qIdx]) return;
+    setPicked(prev => ({ ...prev, [qIdx]: optLabel }));
+    onAnswerQuestion(optLabel);
+  };
 
   return (
     <ToolShell color={color} isError={isError} errorMessage={errorMessage}>
@@ -957,6 +972,7 @@ function AskUserQuestionTool({ input, output, isError, errorMessage }: ToolProps
         <div className="px-3 pb-3 space-y-3">
           {rawQuestions.map((raw, i) => {
             const q = renderQuestion(raw);
+            const choice = picked[i];
             return (
               <div key={i} className={i > 0 ? 'pt-3 border-t border-white/[0.06]' : ''}>
                 {q.header && q.header !== q.text && (
@@ -964,22 +980,53 @@ function AskUserQuestionTool({ input, output, isError, errorMessage }: ToolProps
                 )}
                 <p className="text-xs font-medium text-foreground/90 leading-relaxed">{q.text}</p>
                 {q.options && q.options.length > 0 && (
-                  <div className="mt-1.5 flex flex-col gap-1">
-                    {q.options.map((opt, j) => (
-                      <div key={j} className="flex items-baseline gap-2">
-                        <span className="text-[10px] px-2 py-0.5 rounded border font-mono shrink-0"
-                          style={{ borderColor: `${color}40`, color, background: `${color}12` }}>
-                          {optionLabel(opt)}
+                  <div className="mt-2 flex flex-col gap-1.5">
+                    {q.options.map((opt, j) => {
+                      const label = optionLabel(opt);
+                      const desc = optionDesc(opt);
+                      const isPicked = choice === label;
+                      const isDimmed = !!choice && !isPicked;
+                      const baseStyle = {
+                        borderColor: isPicked ? color : `${color}40`,
+                        color: isPicked ? '#fff' : color,
+                        background: isPicked ? color : `${color}12`,
+                      };
+                      const content = (
+                        <span className="flex items-baseline gap-2">
+                          <span className="text-[10px] px-2 py-0.5 rounded border font-mono shrink-0 transition-all" style={baseStyle}>
+                            {label}
+                          </span>
+                          {desc && (
+                            <span className="text-[10px] text-muted-foreground/70 text-left">{desc}</span>
+                          )}
                         </span>
-                        {optionDesc(opt) && (
-                          <span className="text-[10px] text-muted-foreground/70">{optionDesc(opt)}</span>
-                        )}
-                      </div>
-                    ))}
+                      );
+                      if (interactive) {
+                        return (
+                          <button
+                            key={j}
+                            type="button"
+                            disabled={!!choice}
+                            onClick={() => onPick(i, label)}
+                            className={`text-left rounded px-1.5 py-1 -mx-1.5 transition-opacity ${
+                              isDimmed ? 'opacity-30' : 'hover:bg-white/[0.04]'
+                            } ${choice ? 'cursor-default' : 'cursor-pointer'}`}
+                          >
+                            {content}
+                          </button>
+                        );
+                      }
+                      return <div key={j} className="px-1.5 py-1 -mx-1.5">{content}</div>;
+                    })}
                     {q.multiSelect && (
                       <span className="text-[9px] text-muted-foreground/50 mt-0.5">multi-select</span>
                     )}
                   </div>
+                )}
+                {choice && interactive && (
+                  <p className="mt-2 text-[10px] text-emerald-400/80">
+                    ✓ Sent: <span className="font-mono">{choice}</span>
+                  </p>
                 )}
                 {answers[q.text] && (
                   <p className="mt-1.5 text-xs text-muted-foreground leading-relaxed">{answers[q.text]}</p>
@@ -989,6 +1036,559 @@ function AskUserQuestionTool({ input, output, isError, errorMessage }: ToolProps
           })}
         </div>
       )}
+    </ToolShell>
+  );
+}
+
+// ─── WebFetch ─────────────────────────────────────────────────────────────────
+
+function formatBytes(n: number): string {
+  if (!Number.isFinite(n) || n <= 0) return '0 B';
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+function WebFetchTool({ input, output, isError, errorMessage }: ToolProps) {
+  const [open, setOpen] = useState(false);
+  const color = TOOL_COLORS.WebFetch;
+  const url = (input?.url as string) || '';
+  const prompt = (input?.prompt as string) || '';
+  const code = (output?.code as number) ?? null;
+  const codeText = (output?.codeText as string) || '';
+  const bytes = (output?.bytes as number) ?? 0;
+  const result = (output?.result as string) || '';
+
+  let host = '';
+  let path = '';
+  try {
+    const u = new URL(url);
+    host = u.host;
+    path = (u.pathname + u.search) || '';
+    if (path === '/') path = '';
+  } catch {
+    host = url;
+  }
+
+  const ok = code === 200;
+  const statusBadge =
+    code !== null
+      ? <Badge color={ok ? '#10B981' : '#EF4444'}>{ok ? '200 OK' : `${code}${codeText ? ` ${codeText}` : ''}`}</Badge>
+      : undefined;
+
+  const title = (
+    <div className="min-w-0 flex items-baseline gap-1.5">
+      <a
+        href={url}
+        target="_blank"
+        rel="noopener noreferrer"
+        title={url}
+        onClick={e => e.stopPropagation()}
+        className="text-xs font-mono text-foreground truncate hover:underline"
+        style={{ color }}
+      >
+        {host}
+        {path && <span className="text-muted-foreground/70">{path}</span>}
+      </a>
+    </div>
+  );
+
+  return (
+    <ToolShell color={color} isError={isError} errorMessage={errorMessage}>
+      <CollapsibleHeader
+        icon={Globe}
+        color={color}
+        title={title}
+        extra={statusBadge}
+        open={open}
+        onToggle={() => setOpen(v => !v)}
+      />
+      {prompt && (
+        <div className="px-3 -mt-1 pb-2">
+          <p className="text-[11px] text-muted-foreground/70 italic leading-relaxed">{prompt}</p>
+        </div>
+      )}
+      {open && (
+        <div className="px-3 pb-3 space-y-2">
+          {result ? (
+            <div
+              className="rounded-md p-3 text-xs leading-relaxed prose prose-invert prose-sm max-w-none overflow-y-auto"
+              style={{ background: 'rgba(0,0,0,0.20)', maxHeight: '360px' }}
+            >
+              <ReactMarkdown>{result}</ReactMarkdown>
+            </div>
+          ) : (
+            <p className="text-xs text-muted-foreground italic">No response body</p>
+          )}
+          <div className="flex items-center gap-3 pt-1 border-t border-white/[0.06] text-[10px] text-muted-foreground">
+            {bytes > 0 && <span>{formatBytes(bytes)}</span>}
+            {code !== null && (
+              <span>
+                HTTP {code}
+                {codeText ? ` ${codeText}` : ''}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+    </ToolShell>
+  );
+}
+
+// ─── WebSearch ────────────────────────────────────────────────────────────────
+
+interface SearchLink { title?: string; url?: string }
+
+function WebSearchTool({ input, output, isError, errorMessage }: ToolProps) {
+  const [open, setOpen] = useState(true);
+  const color = TOOL_COLORS.WebSearch;
+  const query = (input?.query as string) || '';
+  const allowedDomains = Array.isArray(input?.allowed_domains)
+    ? (input!.allowed_domains as string[])
+    : [];
+  const results = Array.isArray(output?.results) ? (output!.results as unknown[]) : [];
+  const duration = typeof output?.durationSeconds === 'number'
+    ? (output.durationSeconds as number)
+    : undefined;
+
+  const first = results[0] as { content?: SearchLink[] } | undefined;
+  const links = Array.isArray(first?.content) ? first!.content : [];
+  const summary = typeof results[1] === 'string' ? (results[1] as string) : '';
+
+  const linkColor = '#3B82F6';
+
+  return (
+    <ToolShell color={color} isError={isError} errorMessage={errorMessage}>
+      <CollapsibleHeader
+        icon={Search}
+        color={color}
+        title={
+          <div className="min-w-0 space-y-1">
+            <span className="text-xs font-mono text-foreground block truncate">{query}</span>
+            {allowedDomains.length > 0 && (
+              <div className="flex flex-wrap gap-1">
+                {allowedDomains.map((d) => (
+                  <span
+                    key={d}
+                    className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-muted/40 text-muted-foreground"
+                  >
+                    {d}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        }
+        open={open}
+        onToggle={() => setOpen((v) => !v)}
+      />
+      {open && (
+        <div className="px-3 pb-3 space-y-3">
+          {links.length > 0 && (
+            <div>
+              {links.map((link, i) => (
+                <div
+                  key={i}
+                  className={i > 0 ? 'pt-2 mt-2 border-t border-white/[0.06]' : ''}
+                >
+                  <a
+                    href={link.url || '#'}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={(e) => e.stopPropagation()}
+                    className="text-xs hover:underline block truncate"
+                    style={{ color: linkColor }}
+                  >
+                    {link.title || link.url || 'Untitled'}
+                  </a>
+                  {link.url && (
+                    <p className="text-[10px] font-mono text-muted-foreground/60 truncate mt-0.5">
+                      {link.url}
+                    </p>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {summary && (
+            <div
+              className="rounded-md p-3 text-xs leading-relaxed prose prose-invert prose-sm max-w-none overflow-y-auto"
+              style={{ background: 'rgba(0,0,0,0.20)', maxHeight: '360px' }}
+            >
+              <ReactMarkdown>{summary}</ReactMarkdown>
+            </div>
+          )}
+
+          {(links.length > 0 || duration !== undefined) && (
+            <div className="flex items-center gap-2 pt-1 border-t border-white/[0.06] text-[10px] text-muted-foreground">
+              {links.length > 0 && (
+                <span>{links.length} result{links.length === 1 ? '' : 's'}</span>
+              )}
+              {links.length > 0 && duration !== undefined && <span>·</span>}
+              {duration !== undefined && <span>{duration.toFixed(1)}s</span>}
+            </div>
+          )}
+        </div>
+      )}
+    </ToolShell>
+  );
+}
+
+// ─── Monitor ──────────────────────────────────────────────────────────────────
+
+function extractMonitorOutput(output: Record<string, unknown> | null): string {
+  if (output === null || output === undefined) return '';
+  if (typeof output === 'string') return output;
+  const candidates = ['result', 'output', 'stdout', 'content'] as const;
+  for (const k of candidates) {
+    const v = output[k];
+    if (typeof v === 'string') return v;
+  }
+  return JSON.stringify(output, null, 2);
+}
+
+function MonitorTool({ input, output, isError, errorMessage }: ToolProps) {
+  const [open, setOpen] = useState(true);
+  const color = TOOL_COLORS.Monitor;
+
+  const hasCommand = typeof input?.command === 'string';
+  const description = (input?.description as string) || '';
+  const command = (input?.command as string) || '';
+  const taskId = (input?.taskId as string) || '';
+  const persistent = input?.persistent as boolean | undefined;
+  const timeoutMs = (input?.timeout_ms ?? input?.timeoutMs) as number | undefined;
+  const outputStr = extractMonitorOutput(output);
+  const timeoutLabel = typeof timeoutMs === 'number' && timeoutMs > 0
+    ? `${Math.round(timeoutMs / 1000)}s timeout`
+    : '';
+
+  const title = hasCommand ? (
+    <span className="text-xs font-medium text-foreground truncate">
+      {description || 'Monitor'}
+    </span>
+  ) : (
+    <span className="text-xs font-medium text-foreground">
+      Monitor:{' '}
+      <span className="font-mono text-muted-foreground">
+        {taskId ? taskId.slice(0, 8) : '—'}
+      </span>
+    </span>
+  );
+
+  const extras = (
+    <>
+      {persistent !== undefined && (
+        <Badge color={persistent ? '#10B981' : '#64748B'}>
+          {persistent ? 'persistent' : 'one-shot'}
+        </Badge>
+      )}
+      {timeoutLabel && <Badge color={color}>{timeoutLabel}</Badge>}
+    </>
+  );
+
+  return (
+    <ToolShell color={color} isError={isError} errorMessage={errorMessage}>
+      <CollapsibleHeader
+        icon={Activity}
+        color={color}
+        title={title}
+        extra={extras}
+        open={open}
+        onToggle={() => setOpen((v) => !v)}
+      />
+      {open && (
+        <div className="px-3 pb-3 space-y-2">
+          {hasCommand && command && (
+            <div>
+              <p className="text-[10px] text-muted-foreground mb-1">Command</p>
+              <TerminalBlock text={command} />
+            </div>
+          )}
+          {hasCommand && outputStr && (
+            <div className="pt-2 border-t border-white/[0.06]">
+              <p className="text-[10px] text-muted-foreground mb-1">Output</p>
+              <TerminalBlock text={outputStr} isError={isError} />
+            </div>
+          )}
+          {!hasCommand && (
+            outputStr
+              ? <TerminalBlock text={outputStr} isError={isError} />
+              : <p className="text-xs text-muted-foreground italic">Waiting for results…</p>
+          )}
+        </div>
+      )}
+    </ToolShell>
+  );
+}
+
+// ─── TaskStop ─────────────────────────────────────────────────────────────────
+
+function TaskStopTool({ input, output, isError, errorMessage }: ToolProps) {
+  const color = TOOL_COLORS.TaskStop;
+  const taskId = (input?.task_id as string) || (output?.task_id as string) || '';
+  const taskType = (output?.task_type as string) || '';
+  const command = (output?.command as string) || '';
+
+  const title = (
+    <div className="flex items-center gap-2 min-w-0">
+      <span className="text-xs font-medium text-foreground">Task Stopped</span>
+      {taskId && (
+        <span className="text-[10px] font-mono text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded">
+          {taskId.slice(0, 8)}
+        </span>
+      )}
+    </div>
+  );
+
+  return (
+    <ToolShell color={color} isError={isError} errorMessage={errorMessage}>
+      <StaticHeader
+        icon={CircleStop}
+        color={color}
+        title={title}
+        extra={taskType ? <Badge color="#64748B">{taskType}</Badge> : undefined}
+      />
+      {command && (
+        <div className="px-3 pb-3">
+          <p
+            className="text-[11px] font-mono text-muted-foreground/80 truncate rounded px-2 py-1.5"
+            style={{ background: 'rgba(0,0,0,0.20)' }}
+            title={command}
+          >
+            {command}
+          </p>
+        </div>
+      )}
+    </ToolShell>
+  );
+}
+
+// ─── NotebookEdit ─────────────────────────────────────────────────────────────
+
+function NotebookEditTool({ input, output, isError, errorMessage }: ToolProps) {
+  const color = TOOL_COLORS.NotebookEdit;
+  const notebookPath = (input?.notebook_path as string) || '';
+  const cellId = (input?.cell_id as string) || '';
+  const editMode = ((input?.edit_mode as string) || 'replace').toLowerCase();
+  const cellType = (input?.cell_type as string) || '';
+  const newSource = (input?.new_source as string) || '';
+
+  const filename = notebookPath ? (notebookPath.split('/').pop() || notebookPath) : 'notebook';
+  const lineCount = newSource ? newSource.split('\n').length : 0;
+
+  const isDelete  = editMode === 'delete';
+  const isInsert  = editMode === 'insert';
+  const isReplace = editMode === 'replace';
+  const useMarkdown = isInsert && cellType === 'markdown';
+
+  // Collapsed by default for big replaces; expanded for inserts. Delete has no body.
+  const [open, setOpen] = useState(!isDelete && (isInsert || lineCount <= 10));
+
+  const modeBadge =
+    isReplace ? <Badge color="#F59E0B">Replaced</Badge> :
+    isInsert  ? <Badge color="#10B981">Inserted</Badge> :
+    isDelete  ? <Badge color="#EF4444">Deleted</Badge> :
+    <Badge color={color}>{editMode}</Badge>;
+
+  const cellTypeBadge = cellType
+    ? <Badge color="#64748B">{cellType}</Badge>
+    : undefined;
+
+  const cellIdShort = cellId.length > 14 ? cellId.slice(0, 14) + '…' : cellId;
+
+  const title = (
+    <div className="flex items-center gap-2 min-w-0">
+      <span className="text-xs font-mono text-foreground truncate">{filename}</span>
+      {cellId && (
+        <span className="text-[10px] font-mono text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded shrink-0">
+          {cellIdShort}
+        </span>
+      )}
+    </div>
+  );
+
+  const extras = (
+    <>
+      {cellTypeBadge}
+      {modeBadge}
+    </>
+  );
+
+  const footerPath = notebookPath ? (
+    <p
+      className="text-[10px] font-mono text-muted-foreground/60 truncate"
+      title={notebookPath}
+    >
+      {notebookPath}
+    </p>
+  ) : null;
+
+  // Delete mode: compact single line, no body, no collapse.
+  if (isDelete) {
+    return (
+      <ToolShell color={color} isError={isError} errorMessage={errorMessage}>
+        <StaticHeader icon={BookOpen} color={color} title={title} extra={extras} />
+        {footerPath && <div className="px-3 pb-2 pt-0">{footerPath}</div>}
+      </ToolShell>
+    );
+  }
+
+  // Replace / Insert: collapsible body with the new source.
+  return (
+    <ToolShell color={color} isError={isError} errorMessage={errorMessage}>
+      <CollapsibleHeader
+        icon={BookOpen}
+        color={color}
+        title={title}
+        extra={extras}
+        open={open}
+        onToggle={() => setOpen((v) => !v)}
+      />
+      {open && (
+        <div className="px-3 pb-3 space-y-2">
+          {newSource ? (
+            useMarkdown ? (
+              <div
+                className="rounded-md p-3 text-xs leading-relaxed prose prose-invert prose-sm max-w-none overflow-y-auto"
+                style={{ background: 'rgba(0,0,0,0.20)', maxHeight: '360px' }}
+              >
+                <ReactMarkdown>{newSource}</ReactMarkdown>
+              </div>
+            ) : (
+              <CodeBlock content={newSource} filePath="cell.py" />
+            )
+          ) : (
+            <p className="text-xs text-muted-foreground italic">No source provided</p>
+          )}
+          {footerPath}
+        </div>
+      )}
+      {!open && footerPath && <div className="px-3 pb-2">{footerPath}</div>}
+    </ToolShell>
+  );
+}
+
+// ─── PushNotification ─────────────────────────────────────────────────────────
+
+const PUSH_REASON_LABELS: Record<string, string> = {
+  bridge_inactive: 'Remote bridge not connected',
+  bridge_failed:   'Remote bridge failed',
+  not_authorized:  'Notification permission denied',
+  rate_limited:    'Rate limited',
+};
+
+function PushNotificationTool({ input, output, isError, errorMessage }: ToolProps) {
+  const color = TOOL_COLORS.PushNotification;
+  const message = (input?.message as string) || (output?.message as string) || '';
+  const status = (input?.status as string) || '';
+  const pushSent = output?.pushSent as boolean | undefined;
+  const localSent = output?.localSent as boolean | undefined;
+  const disabledReason = (output?.disabledReason as string) || '';
+  const sentAt = (output?.sentAt as string) || '';
+
+  const reasonText = (localSent === false && disabledReason)
+    ? PUSH_REASON_LABELS[disabledReason] ?? disabledReason.replace(/_/g, ' ')
+    : '';
+
+  const extras = (
+    <>
+      {pushSent === true && <Badge color="#10B981">Sent</Badge>}
+      {pushSent === false && <Badge color="#F59E0B">Not sent</Badge>}
+      {localSent === true && <Badge color="#10B981">Local</Badge>}
+      {status && <Badge color="#64748B">{status}</Badge>}
+    </>
+  );
+
+  return (
+    <ToolShell color={color} isError={isError} errorMessage={errorMessage}>
+      <StaticHeader
+        icon={Bell}
+        color={color}
+        title={<span className="text-xs font-medium text-foreground">Push Notification</span>}
+        extra={extras}
+      />
+      <div className="px-3 pb-3 space-y-1.5">
+        {message && (
+          <p className="text-sm text-foreground/90 leading-relaxed">{message}</p>
+        )}
+        {reasonText && (
+          <p className="text-[11px] text-red-400/80">{reasonText}</p>
+        )}
+        {sentAt && (
+          <p className="text-[10px] text-muted-foreground/60">
+            {formatRelativeTime(sentAt)}
+          </p>
+        )}
+      </div>
+    </ToolShell>
+  );
+}
+
+// ─── CronCreate ───────────────────────────────────────────────────────────────
+
+function CronCreateTool({ input, output, isError, errorMessage }: ToolProps) {
+  const color = TOOL_COLORS.CronCreate;
+  const cronExpr = (input?.cron as string) || (output?.cron as string) || '';
+  const humanSchedule = (output?.humanSchedule as string) || '';
+  const id = (output?.id as string) || '';
+  const recurring = (output?.recurring ?? input?.recurring) as boolean | undefined;
+  const durable = output?.durable as boolean | undefined;
+  const prompt = (input?.prompt as string) || '';
+
+  const idShort = id ? (id.length > 10 ? id.slice(0, 10) : id) : '';
+  // humanSchedule is sometimes just an echo of the cron expression. Only show
+  // it as the primary line when it actually parses to something more readable.
+  const distinctHuman = humanSchedule && humanSchedule.trim() && humanSchedule !== cronExpr;
+
+  const title = (
+    <div className="flex items-center gap-2 min-w-0">
+      <span className="text-xs font-medium text-foreground">Cron Job Created</span>
+      {idShort && (
+        <span className="text-[10px] font-mono text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded shrink-0">
+          {idShort}
+        </span>
+      )}
+    </div>
+  );
+
+  const extras = (
+    <>
+      {recurring === true && <Badge color="#3B82F6">Recurring</Badge>}
+      {recurring === false && <Badge color="#64748B">One-time</Badge>}
+      {durable === true && <Badge color="#10B981">Durable</Badge>}
+    </>
+  );
+
+  return (
+    <ToolShell color={color} isError={isError} errorMessage={errorMessage}>
+      <StaticHeader icon={Clock} color={color} title={title} extra={extras} />
+      <div className="px-3 pb-3 space-y-2">
+        <div className="flex flex-col gap-0.5">
+          {distinctHuman && (
+            <p className="text-xs text-foreground/90">{humanSchedule}</p>
+          )}
+          {cronExpr && (
+            <p className={`font-mono ${distinctHuman ? 'text-[10px] text-muted-foreground/70' : 'text-xs text-foreground/90'}`}>
+              {cronExpr}
+            </p>
+          )}
+        </div>
+        {prompt && (
+          <p
+            className="text-[11px] text-muted-foreground/80 leading-snug"
+            style={{
+              display: '-webkit-box',
+              WebkitBoxOrient: 'vertical',
+              WebkitLineClamp: 2,
+              overflow: 'hidden',
+            }}
+            title={prompt}
+          >
+            {prompt}
+          </p>
+        )}
+      </div>
     </ToolShell>
   );
 }
@@ -1140,9 +1740,9 @@ function FallbackTool({
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export function ToolCallCard({
-  toolName, toolInput, toolOutput, isError, errorMessage,
+  toolName, toolInput, toolOutput, isError, errorMessage, onAnswerQuestion,
 }: ToolCallCardProps) {
-  const props: ToolProps = { input: toolInput, output: toolOutput, isError, errorMessage };
+  const props: ToolProps = { input: toolInput, output: toolOutput, isError, errorMessage, onAnswerQuestion };
 
   switch (toolName) {
     case 'Write':      return <WriteTool {...props} />;
@@ -1160,6 +1760,13 @@ export function ToolCallCard({
     case 'ToolSearch':      return <ToolSearchTool {...props} />;
     case 'SendMessage':     return <SendMessageTool {...props} />;
     case 'AskUserQuestion': return <AskUserQuestionTool {...props} />;
+    case 'WebFetch':        return <WebFetchTool {...props} />;
+    case 'WebSearch':       return <WebSearchTool {...props} />;
+    case 'Monitor':         return <MonitorTool {...props} />;
+    case 'TaskStop':        return <TaskStopTool {...props} />;
+    case 'NotebookEdit':    return <NotebookEditTool {...props} />;
+    case 'PushNotification': return <PushNotificationTool {...props} />;
+    case 'CronCreate':      return <CronCreateTool {...props} />;
     case 'TeamCreate':      return <TeamCreateTool {...props} />;
     default:                return <FallbackTool toolName={toolName} {...props} />;
   }

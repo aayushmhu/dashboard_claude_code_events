@@ -3,7 +3,7 @@
 import { useRouter } from 'next/navigation';
 import { Badge } from '@/components/ui/badge';
 import { Session } from '@/lib/types';
-import { formatRelativeTime, formatAbsoluteTime, formatDuration, calcCost, formatCost } from '@/lib/utils';
+import { formatRelativeTime, formatAbsoluteTime, formatDuration, calcCost, formatCost, formatTokens } from '@/lib/utils';
 import { getToolColor } from '@/lib/colors';
 import { AlertCircle, Terminal, Monitor, Code2, Brain, ImageIcon, MessageSquarePlus } from 'lucide-react';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
@@ -124,6 +124,7 @@ export function SessionTable({ sessions, hideTools = false }: SessionTableProps)
               <th className="pb-3 pr-4 font-medium uppercase tracking-wide">Project</th>
               <th className="pb-3 pr-4 font-medium uppercase tracking-wide">Last Active</th>
               <th className="pb-3 pr-4 font-medium uppercase tracking-wide">Duration</th>
+              <th className="pb-3 pr-4 font-medium uppercase tracking-wide">Tokens</th>
               <th className="pb-3 pr-4 font-medium uppercase tracking-wide">Cost</th>
               <th className="hidden lg:table-cell pb-3 pr-4 font-medium uppercase tracking-wide">Events</th>
               {!hideTools && <th className="hidden lg:table-cell pb-3 pr-4 font-medium uppercase tracking-wide">Tools</th>}
@@ -183,6 +184,12 @@ export function SessionTable({ sessions, hideTools = false }: SessionTableProps)
 
                 <td className="py-3 pr-4 text-muted-foreground text-xs font-mono whitespace-nowrap">
                   {formatDuration(session.duration_seconds)}
+                </td>
+
+                <td className="py-3 pr-4 text-xs font-mono text-foreground/80 whitespace-nowrap">
+                  {session.total_tokens > 0
+                    ? formatTokens(session.total_tokens)
+                    : <span className="text-muted-foreground/40">—</span>}
                 </td>
 
                 <td className="py-3 pr-4 text-xs font-mono text-amber-400/80">

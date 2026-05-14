@@ -11,7 +11,8 @@ export async function GET(request: NextRequest) {
 
   try {
     if (grouped) {
-      const [groups] = await pool.query<RowDataPacket[]>(
+      // Tool errors — from cc_events.is_error
+      const [toolGroups] = await pool.query<RowDataPacket[]>(
         `SELECT
           COALESCE(e.error_message, e.content, 'Unknown error') AS message,
           e.tool_name,
@@ -26,20 +27,55 @@ export async function GET(request: NextRequest) {
         [limit, offset]
       );
 
-      const [[{ total }]] = await pool.query<RowDataPacket[]>(
-        `SELECT COUNT(*) as total FROM (
+      const [[{ tool_total }]] = await pool.query<RowDataPacket[]>(
+        `SELECT COUNT(*) as tool_total FROM (
           SELECT 1 FROM cc_events
           WHERE is_error = TRUE
           GROUP BY COALESCE(error_message, content, 'Unknown error'), tool_name
         ) g`
       );
 
+      // API errors — from cc_transcript_records where subtype='api_error'.
+      // content_text is a JSON blob with cause.code (e.g. 'ConnectionRefused')
+      // and cause.path (the Anthropic API URL that failed).
+      const [apiGroups] = await pool.query<RowDataPacket[]>(
+        `SELECT
+          COALESCE(json_extract(content_text, '$.cause.code'),
+                   json_extract(content_text, '$.type'),
+                   'Unknown API error') AS code,
+          json_extract(content_text, '$.cause.path') AS url_path,
+          COUNT(*) AS occurrences,
+          COUNT(DISTINCT session_id) AS session_count,
+          MAX(timestamp) AS last_seen
+        FROM cc_transcript_records
+        WHERE record_type = 'system'
+          AND record_subtype = 'api_error'
+        GROUP BY code, url_path
+        ORDER BY last_seen DESC
+        LIMIT 50`
+      );
+
+      const [[{ api_total }]] = await pool.query<RowDataPacket[]>(
+        `SELECT COUNT(*) AS api_total FROM (
+          SELECT 1 FROM cc_transcript_records
+          WHERE record_type='system' AND record_subtype='api_error'
+          GROUP BY json_extract(content_text, '$.cause.code'),
+                   json_extract(content_text, '$.cause.path')
+        ) g`
+      );
+
       return NextResponse.json({
-        groups,
-        total: Number(total),
+        // Tool errors (existing shape preserved for backward compat — `groups` aliased)
+        tool_groups: toolGroups,
+        tool_total: Number(tool_total),
+        api_groups: apiGroups,
+        api_total: Number(api_total),
+        // Legacy aliases (old clients of /api/errors still work)
+        groups: toolGroups,
+        total: Number(tool_total),
         page,
         limit,
-        total_pages: Math.ceil(Number(total) / limit),
+        total_pages: Math.ceil(Number(tool_total) / limit),
       });
     }
 

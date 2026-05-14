@@ -57,6 +57,23 @@ export function formatTokens(n: number): string {
   return String(n);
 }
 
+// Generate an RFC 4122 v4 UUID. Uses `crypto.randomUUID` when available (Chrome 92+,
+// secure contexts only — HTTPS or localhost) and falls back to `crypto.getRandomValues`
+// for non-secure contexts (custom HTTP domains, file://, etc.).
+export function uuid(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  // Fallback: build v4 UUID manually. `crypto.getRandomValues` is available
+  // even in non-secure contexts on every browser since 2014.
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  bytes[6] = (bytes[6] & 0x0f) | 0x40; // version 4
+  bytes[8] = (bytes[8] & 0x3f) | 0x80; // variant 10xx
+  const hex = Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 // Convert a JS Date to SQLite's stored timestamp format `YYYY-MM-DD HH:MM:SS`.
 // SQLite does lexicographic string comparison on timestamp columns, so passing
 // an ISO string with 'T' and 'Z' fails — 'T' sorts higher than ' '.
@@ -83,7 +100,7 @@ export function formatMs(ms: number): string {
 export const TOKEN_PRICING = {
   input: 3 / 1_000_000,
   output: 15 / 1_000_000,
-  cache_write: 3.75 / 1_000_000,
+  cache_write: 6 / 1_000_000,
   cache_read: 0.30 / 1_000_000,
 } as const;
 
@@ -95,11 +112,11 @@ export interface ModelPricing {
 }
 
 // Pricing per million tokens, keyed by model family.
-// All rates from Anthropic's published pricing page.
+// All rates from Anthropic's published pricing page. cache_write is the 1h rate.
 export const MODEL_PRICING: Record<string, ModelPricing> = {
-  opus:   { input: 15,   output: 75,   cache_write: 18.75, cache_read: 1.50 },
-  sonnet: { input: 3,    output: 15,   cache_write: 3.75,  cache_read: 0.30 },
-  haiku:  { input: 0.80, output: 4,    cache_write: 1.00,  cache_read: 0.08 },
+  opus:   { input: 5, output: 25, cache_write: 10, cache_read: 0.50 },
+  sonnet: { input: 3, output: 15, cache_write: 6,  cache_read: 0.30 },
+  haiku:  { input: 1, output: 5,  cache_write: 2,  cache_read: 0.10 },
 };
 
 export function getModelPricing(model: string | null | undefined): ModelPricing {

@@ -9,6 +9,7 @@ import { ToolStats } from '@/lib/types';
 import { Wrench, Hash, AlertTriangle, Zap } from 'lucide-react';
 import { formatRelativeTime, formatMs } from '@/lib/utils';
 import Link from 'next/link';
+import { ToolNameCell } from './tool-name-cell';
 
 async function getData() {
   const base = process.env.NEXT_PUBLIC_APP_URL || `http://localhost:${process.env.PORT || 3000}`;
@@ -72,12 +73,7 @@ export default async function ToolsPage() {
                     {tools.map((tool) => (
                       <tr key={tool.tool_name} className="border-b border-border/50 hover:bg-muted/30 transition-colors">
                         <td className="py-3 pr-6">
-                          <Link
-                            href={`/tools/${encodeURIComponent(tool.tool_name)}`}
-                            className="font-medium hover:text-primary transition-colors"
-                          >
-                            {tool.tool_name}
-                          </Link>
+                          <ToolNameCell toolName={tool.tool_name} />
                         </td>
                         <td className="py-3 pr-6 text-right text-muted-foreground">{tool.total_calls.toLocaleString()}</td>
                         <td className="py-3 pr-6 text-right text-muted-foreground">

@@ -14,9 +14,9 @@ function esc(s: unknown): string {
 
 function getRates(model: string | null | undefined) {
   const m = (model || '').toLowerCase();
-  if (m.includes('opus'))  return { input: 15,   output: 75,   cw: 18.75, cr: 1.50 };
-  if (m.includes('haiku')) return { input: 0.80, output: 4,    cw: 1.00,  cr: 0.08 };
-  return                          { input: 3,    output: 15,   cw: 3.75,  cr: 0.30 };
+  if (m.includes('opus'))  return { input: 5, output: 25, cw: 10, cr: 0.50 };
+  if (m.includes('haiku')) return { input: 1, output: 5,  cw: 2,  cr: 0.10 };
+  return                          { input: 3, output: 15, cw: 6,  cr: 0.30 };
 }
 function calcCost(input: number, output: number, cacheWrite: number, cacheRead: number, model: string | null | undefined): number {
   const r = getRates(model);

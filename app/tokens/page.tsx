@@ -154,7 +154,7 @@ export default async function TokensPage({
           {[
             { label: 'Input',       value: totals.input_tokens,       cost: calcCost(totals.input_tokens, 0, 0, 0, null),       color: 'text-blue-400',    rate: '$3/M' },
             { label: 'Output',      value: totals.output_tokens,      cost: calcCost(0, totals.output_tokens, 0, 0, null),      color: 'text-rose-400',    rate: '$15/M' },
-            { label: 'Cache Write', value: totals.cache_write_tokens, cost: calcCost(0, 0, totals.cache_write_tokens, 0, null), color: 'text-amber-400',   rate: '$3.75/M' },
+            { label: 'Cache Write', value: totals.cache_write_tokens, cost: calcCost(0, 0, totals.cache_write_tokens, 0, null), color: 'text-amber-400',   rate: '$6/M' },
             { label: 'Cache Read',  value: totals.cache_read_tokens,  cost: calcCost(0, 0, 0, totals.cache_read_tokens, null),  color: 'text-emerald-400', rate: '$0.30/M' },
           ].map(({ label, value, cost, color, rate }) => (
             <div key={label} className="rounded-xl border border-border bg-card px-4 py-3">

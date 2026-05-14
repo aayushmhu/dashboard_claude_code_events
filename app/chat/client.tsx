@@ -1,12 +1,15 @@
 'use client';
 
 import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo, memo } from 'react';
+import { createPortal } from 'react-dom';
+import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import { useRouter } from 'next/navigation';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import MonacoEditor from '@monaco-editor/react';
+import { NotebookPreview } from './notebook-preview';
 import {
   Bot, User, Send, Square, Plus, Terminal, FolderOpen, Folder,
   Copy, Check, AlertTriangle, ChevronDown, ChevronRight, BellRing,
@@ -14,10 +17,10 @@ import {
   File, FileText, FileCode, X, Pencil, FilePlus, FolderPlus,
   Eye, ImageIcon, AtSign, Slash, Paperclip,
   Crown, ShieldCheck, FlaskConical, Server, Layout, Cloud, Database, Lock, PauseCircle,
-  Brain, GitBranch, Shield, ZoomIn,
+  Brain, GitBranch, Shield, ZoomIn, HelpCircle,
 } from 'lucide-react';
 import { TOOL_COLORS, BUBBLE_COLORS, ROLE_COLORS, getAgentColor } from '@/lib/colors';
-import { formatCost, formatRelativeTime, formatDuration, formatTokens, truncateId, parseDbDate, formatAgentName, getAgentIconType, detectMessageType, calcCost } from '@/lib/utils';
+import { formatCost, formatRelativeTime, formatDuration, formatTokens, truncateId, parseDbDate, formatAgentName, getAgentIconType, detectMessageType, calcCost, cn, uuid } from '@/lib/utils';
 import { ToolCallCard } from '@/components/tool-call-card';
 import { TaskNotificationCard, AgentReportCard, AgentMessageCard } from '@/components/task-notification-card';
 import { Session, Event } from '@/lib/types';
@@ -52,9 +55,13 @@ interface ChatMessage {
   toolInput?: Record<string, unknown>;
   toolOutput?: string | Record<string, unknown> | null;
   toolIsError?: boolean;
+  /** Claude's tool_use.id — needed to send tool_result back for interactive tools (AskUserQuestion). */
+  toolUseId?: string;
   agentType?: string;
   agentName?: string;
   permissionDenial?: { tool_name: string; tool_input: Record<string, unknown> };
+  /** Multiple denials bundled from the same stream event (live), so they render as one card. */
+  permissionDenials?: Array<{ tool_name: string; tool_input: Record<string, unknown> }>;
   inputTokens?: number;
   outputTokens?: number;
   cacheCreationTokens?: number;
@@ -78,15 +85,76 @@ interface ChatMessage {
 
 interface SlashCommand { name: string; desc: string; local: boolean; }
 
+// Model options surfaced in the composer pill. `value: ''` means "let CLI default".
+// Display label is shown on the pill; full ID is sent to the streaming endpoint.
+const MODEL_OPTIONS: Array<{ value: string; label: string; hint: string }> = [
+  { value: '',                          label: 'Default',  hint: 'Use CLI default' },
+  { value: 'claude-sonnet-4-6',         label: 'Sonnet',   hint: 'Balanced · $3/M in · $15/M out' },
+  { value: 'claude-opus-4-7',           label: 'Opus',     hint: 'Strongest · $5/M in · $25/M out' },
+  { value: 'claude-haiku-4-5-20251001', label: 'Haiku',    hint: 'Fastest · $1/M in · $5/M out' },
+];
+
+const CONTEXT_WINDOW = 200_000;
+
+// Map a tool_use event to a friendly status line ("Reading client.tsx…",
+// "Running command…"). Same approach as the VS Code Claude Code extension —
+// the strings are extension-side, derived from the tool name and input.
+function formatToolStatus(toolName: string, input: Record<string, unknown>): string {
+  const filePath = (input.file_path ?? input.path ?? input.notebook_path) as string | undefined;
+  const fileName = filePath ? filePath.split('/').pop() : undefined;
+  const editMode = input.edit_mode as string | undefined;
+  const command = input.command as string | undefined;
+  const url = input.url as string | undefined;
+  const pattern = input.pattern as string | undefined;
+  const description = input.description as string | undefined;
+
+  switch (toolName) {
+    case 'Bash':         return command ? `Running \`${command.slice(0, 60)}${command.length > 60 ? '…' : ''}\`` : 'Running command…';
+    case 'Read':         return fileName ? `Reading ${fileName}…` : 'Reading file…';
+    case 'Write':        return fileName ? `Writing ${fileName}…` : 'Writing file…';
+    case 'Edit':         return fileName ? `Editing ${fileName}…` : 'Editing file…';
+    case 'NotebookEdit': {
+      const verb = editMode === 'delete' ? 'Deleting cell in'
+                 : editMode === 'insert' ? 'Inserting cell in'
+                 : 'Editing';
+      return fileName ? `${verb} ${fileName}…` : 'Editing notebook…';
+    }
+    case 'Glob':         return pattern ? `Finding ${pattern}…` : 'Finding files…';
+    case 'Grep':         return pattern ? `Searching for \`${pattern}\`…` : 'Searching codebase…';
+    case 'LS':           return 'Listing directory…';
+    case 'WebSearch':    return 'Searching the web…';
+    case 'WebFetch':     return url ? `Fetching ${new URL(url).hostname}…` : 'Fetching web page…';
+    case 'Task':         return description ? `Spawning agent: ${description}…` : 'Spawning subagent…';
+    case 'Agent':        return description ? `Running agent: ${description}…` : 'Running subagent…';
+    case 'TodoWrite':    return 'Updating todos…';
+    case 'AskUserQuestion': return 'Asking you…';
+    case 'Monitor':      return description ? `Monitoring: ${description}…` : 'Starting monitor…';
+    case 'TaskStop':     return 'Stopping task…';
+    case 'PushNotification': return 'Sending notification…';
+    case 'CronCreate':   return 'Scheduling cron…';
+    default:             return `${toolName}…`;
+  }
+}
+
 const SLASH_COMMANDS: SlashCommand[] = [
-  { name: 'clear',   desc: 'Clear the conversation',                   local: true  },
-  { name: 'help',    desc: 'Show available commands and tips',          local: true  },
-  { name: 'cost',    desc: 'Show session token cost',                   local: true  },
-  { name: 'model',   desc: 'Change the AI model',                      local: true  },
-  { name: 'compact', desc: 'Compact and summarize the conversation',    local: false },
-  { name: 'review',  desc: 'Review recent code changes',               local: false },
-  { name: 'init',    desc: 'Create or update CLAUDE.md for this project', local: false },
-  { name: 'memory',  desc: 'Check and update memory files',            local: false },
+  // Local — handled by the dashboard
+  { name: 'clear',    desc: 'Clear the conversation',                        local: true  },
+  { name: 'help',     desc: 'Show available commands',                       local: true  },
+  { name: 'cost',     desc: 'Show session token cost',                       local: true  },
+  { name: 'model',    desc: 'Change the AI model',                           local: true  },
+  { name: 'context',  desc: 'Show context-window usage on the latest turn',  local: true  },
+  { name: 'usage',    desc: 'Show per-token-type breakdown for this session',local: true  },
+  { name: 'status',   desc: 'Show session status (id, age, turns, cost)',    local: true  },
+  { name: 'export',   desc: 'Download this session as a shareable HTML file',local: true  },
+  { name: 'sessions', desc: 'Open the sessions list',                        local: true  },
+  // Forwarded — sent to the CLI subprocess as a slash message
+  { name: 'compact',  desc: 'Compact and summarize the conversation',        local: false },
+  { name: 'review',   desc: 'Review recent code changes',                    local: false },
+  { name: 'init',     desc: 'Create or update CLAUDE.md for this project',   local: false },
+  { name: 'memory',   desc: 'Check and update memory files',                 local: false },
+  { name: 'resume',   desc: 'Resume a previous session',                     local: false },
+  { name: 'todos',    desc: 'Show / manage TODOs',                           local: false },
+  { name: 'add-dir',  desc: 'Add a directory to the working set',            local: false },
 ];
 
 interface DirectoryOption { path: string; name: string; }
@@ -422,8 +490,32 @@ function Collapsible({ label, children, defaultOpen = false }: { label: string; 
   );
 }
 
-function ChatToolCard({ msg }: { msg: ChatMessage }) {
+function ChatToolCard({
+  msg,
+  onAnswerQuestion,
+  isAnswered,
+}: {
+  msg: ChatMessage;
+  onAnswerQuestion?: (toolUseId: string, answer: string) => void;
+  isAnswered?: boolean;
+}) {
   const toolColor = TOOL_COLORS[msg.toolName ?? ''] || '#64748B';
+
+  // Special case: AskUserQuestion while streaming → render interactive UI
+  // (rather than the generic "running…" placeholder). Other tools keep that.
+  if (msg.isStreaming && msg.toolName === 'AskUserQuestion' && msg.toolUseId && onAnswerQuestion && !isAnswered) {
+    return (
+      <ToolCallCard
+        toolName={msg.toolName}
+        toolInput={msg.toolInput ?? null}
+        toolOutput={null}
+        isError={false}
+        errorMessage={null}
+        timestamp={msg.timestamp.toISOString()}
+        onAnswerQuestion={(answer) => onAnswerQuestion(msg.toolUseId!, answer)}
+      />
+    );
+  }
 
   if (msg.isStreaming) {
     return (
@@ -455,14 +547,379 @@ function ChatToolCard({ msg }: { msg: ChatMessage }) {
 
 type RetryMode = 'default' | 'acceptEdits' | 'dangerouslySkipPermissions';
 
-function PermissionDenialCard({ msg, onRetry }: { msg: ChatMessage; onRetry?: (mode: RetryMode) => void }) {
+function PermissionDenialCard({
+  msg,
+  onRetry,
+  onAnswerQuestion,
+  isAnswered,
+}: {
+  msg: ChatMessage;
+  onRetry?: (mode: RetryMode, allowedTools?: string[]) => void;
+  onAnswerQuestion?: (answer: string) => void;
+  isAnswered?: boolean;
+}) {
   const d = msg.permissionDenial;
+  // When multiple denials arrive in one stream event, they bundle into permissionDenials.
+  // Render them as one card with one set of action buttons.
+  const denials = msg.permissionDenials ?? (d ? [d] : []);
+  const isMultiDenial = denials.length > 1;
+  // Once the user clicks Allow, freeze the card and show a confirmation badge.
+  const [approvedRetryMode, setApprovedRetryMode] = useState<RetryMode | null>(null);
+  const approveLabel = (mode: RetryMode) =>
+    mode === 'default' ? 'once'
+    : mode === 'acceptEdits' ? 'file edits'
+    : 'all';
+  // Tool names from this card's denial(s) — passed as allowedTools on retry so
+  // "Yes, allow once" actually grants those specific tools instead of just retrying
+  // under the same default mode (which deterministically denies again).
+  const deniedToolNames = Array.from(new Set(denials.map(x => x.tool_name).filter(Boolean)));
+  const handleApprove = (mode: RetryMode) => {
+    if (approvedRetryMode || !onRetry) return;
+    setApprovedRetryMode(mode);
+    // "Allow once" (mode=default) → pre-approve the specific tools so the retry actually proceeds.
+    // The other modes (acceptEdits, bypass) take effect via permission mode alone — no per-tool list needed.
+    const toolsForGrant = mode === 'default' ? deniedToolNames : undefined;
+    onRetry(mode, toolsForGrant);
+  };
   const [expanded, setExpanded] = useState(false);
+  // Per-denial input-preview expand state (each tool's "Show what Claude asked" toggles independently)
+  const [expandedDenialIdxs, setExpandedDenialIdxs] = useState<Set<number>>(new Set());
+  // Per-question picks. Each value is an array — length 1 for single-select,
+  // 0+ for multiSelect. Stored as arrays so we don't need two state shapes.
+  const [pickedByQuestion, setPickedByQuestion] = useState<Record<number, string[]>>({});
+  // Set once the bundled response is sent (multi-question) or auto-sent (single).
+  const [submittedAnswer, setSubmittedAnswer] = useState<string | null>(null);
   const primaryInput = d?.tool_input
     ? (d.tool_input.command ?? d.tool_input.path ?? d.tool_input.description ?? Object.values(d.tool_input)[0])
     : null;
-  const inputStr = primaryInput != null ? String(primaryInput) : null;
+  // Stringify safely — objects/arrays were rendering as "[object Object]" (e.g. AskUserQuestion's questions[])
+  const inputStr = primaryInput == null
+    ? null
+    : typeof primaryInput === 'object'
+      ? JSON.stringify(primaryInput, null, 2)
+      : String(primaryInput);
   const isHistorical = msg.isHistorical;
+
+  // Bundle of N tool permission requests in one event → render as a single combined card.
+  // (Same UX principle as multi-question AskUserQuestion: one prompt = one user choice.)
+  if (isMultiDenial && !isHistorical) {
+    const toggleDenial = (i: number) => {
+      setExpandedDenialIdxs(prev => {
+        const next = new Set(prev);
+        if (next.has(i)) next.delete(i); else next.add(i);
+        return next;
+      });
+    };
+    const denialInputStr = (denial: { tool_input?: Record<string, unknown> }) => {
+      if (!denial.tool_input) return null;
+      const ti = denial.tool_input;
+      const v = (ti.command ?? ti.path ?? ti.description ?? Object.values(ti)[0]) as unknown;
+      if (v == null) return null;
+      return typeof v === 'object' ? JSON.stringify(v, null, 2) : String(v);
+    };
+
+    return (
+      <div className="rounded-lg p-3 text-sm flex items-start gap-2"
+        style={{ background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.25)' }}>
+        <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" style={{ color: '#F59E0B' }} />
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <p className="text-xs font-medium" style={{ color: '#F59E0B' }}>
+              {denials.length} permissions requested
+            </p>
+          </div>
+
+          {/* Per-tool list */}
+          <div className="mt-2 space-y-2">
+            {denials.map((denial, i) => {
+              const isOpen = expandedDenialIdxs.has(i);
+              const preview = denialInputStr(denial);
+              return (
+                <div key={i} className="rounded px-2 py-1.5"
+                  style={{ background: 'rgba(245,158,11,0.05)', border: '1px solid rgba(245,158,11,0.15)' }}>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-xs font-mono px-1.5 py-0.5 rounded" style={{ background: 'rgba(245,158,11,0.22)', color: '#F59E0B' }}>
+                      {denial.tool_name}
+                    </span>
+                    {preview && (
+                      <button
+                        onClick={() => toggleDenial(i)}
+                        className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+                      >
+                        {isOpen ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                        {isOpen ? 'Hide input' : 'Show what Claude asked to do'}
+                      </button>
+                    )}
+                  </div>
+                  {isOpen && preview && (
+                    <pre className="mt-1.5 text-[11px] font-mono text-muted-foreground bg-black/20 rounded p-2 overflow-x-auto whitespace-pre-wrap break-all max-h-48">
+                      {preview}
+                    </pre>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          {/* One set of action buttons for the whole bundle — or confirmation badge once approved. */}
+          {approvedRetryMode ? (
+            <p className="mt-2.5 text-[11px] text-emerald-400/80">
+              ✓ Allowed ({approveLabel(approvedRetryMode)})
+            </p>
+          ) : onRetry && (
+            <div className="flex items-center gap-2 mt-2.5 flex-wrap">
+              <button
+                onClick={() => handleApprove('default')}
+                className="text-[11px] px-2.5 py-1 rounded-md font-medium transition-all hover:opacity-80 active:scale-95"
+                style={{ background: 'rgba(52,211,153,0.12)', color: '#34D399', border: '1px solid rgba(52,211,153,0.35)' }}
+              >
+                Yes, allow once
+              </button>
+              <button
+                onClick={() => handleApprove('acceptEdits')}
+                className="text-[11px] px-2.5 py-1 rounded-md font-medium transition-all hover:opacity-80 active:scale-95"
+                style={{ background: 'rgba(245,158,11,0.12)', color: '#F59E0B', border: '1px solid rgba(245,158,11,0.35)' }}
+              >
+                Allow file edits
+              </button>
+              <button
+                onClick={() => handleApprove('dangerouslySkipPermissions')}
+                className="text-[11px] px-2.5 py-1 rounded-md font-medium transition-all hover:opacity-80 active:scale-95"
+                style={{ background: 'rgba(239,68,68,0.12)', color: '#EF4444', border: '1px solid rgba(239,68,68,0.35)' }}
+              >
+                Allow all ⚠
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // Special case: when AskUserQuestion gets gated by permission, the CLI never lets
+  // us reach the actual tool card — but the questions ARE present in tool_input.
+  // Render them as the question card directly. Click → send answer as text;
+  // the permission/dismissal dance happens server-side and we don't care.
+  const isAskUserQuestion = d?.tool_name === 'AskUserQuestion';
+  interface QItem { question?: string; header?: string; options?: Array<string | { label?: string; description?: string }>; multiSelect?: boolean }
+  const questionsArr: QItem[] = isAskUserQuestion && Array.isArray(d?.tool_input?.questions)
+    ? (d!.tool_input!.questions as QItem[])
+    : [];
+  const isQuestionMulti = (q: QItem | string): boolean => typeof q !== 'string' && !!q.multiSelect;
+  // Historical AskUserQuestion — render the question read-only so users see what
+  // Claude asked, instead of a raw JSON dump in the "Permission requested" card.
+  if (isAskUserQuestion && questionsArr.length > 0 && isHistorical) {
+    return (
+      <div className="rounded-lg p-3 text-sm flex items-start gap-2"
+        style={{ background: 'rgba(129,140,248,0.04)', border: '1px solid rgba(129,140,248,0.16)' }}>
+        <HelpCircle className="h-4 w-4 mt-0.5 shrink-0 text-indigo-400/60" />
+        <div className="flex-1 min-w-0 space-y-2">
+          <p className="text-[10px] text-muted-foreground/70 uppercase tracking-wide font-medium">Claude asked</p>
+          {questionsArr.map((raw, qi) => {
+            const q = typeof raw === 'string'
+              ? { text: raw, header: undefined, options: undefined as Array<string | { label?: string; description?: string }> | undefined }
+              : { text: raw.question || raw.header || '', header: raw.header, options: raw.options };
+            return (
+              <div key={qi} className={qi > 0 ? 'pt-2 border-t border-white/[0.04]' : ''}>
+                {q.header && q.header !== q.text && (
+                  <p className="text-[10px] text-muted-foreground mb-1 uppercase tracking-wide font-medium">{q.header}</p>
+                )}
+                <p className="text-xs text-foreground/85 leading-relaxed">{q.text}</p>
+                {q.options && q.options.length > 0 && (
+                  <div className="mt-1.5 flex flex-col gap-1">
+                    {q.options.map((opt, oi) => {
+                      const label = typeof opt === 'string' ? opt : (opt.label || JSON.stringify(opt));
+                      const desc  = typeof opt === 'string' ? undefined : opt.description;
+                      return (
+                        <div key={oi} className="flex items-baseline gap-2 px-1.5 py-0.5">
+                          <span
+                            className="text-[10px] px-2 py-0.5 rounded border font-mono shrink-0"
+                            style={{ borderColor: 'rgba(129,140,248,0.25)', color: '#A5B4FC', background: 'rgba(129,140,248,0.06)' }}
+                          >
+                            {label}
+                          </span>
+                          {desc && <span className="text-[10px] text-muted-foreground/60">{desc}</span>}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
+  if (isAskUserQuestion && questionsArr.length > 0 && !isHistorical && onAnswerQuestion) {
+    const isMultiQuestion = questionsArr.length > 1;
+    // Any question with multiSelect requires an explicit Submit (can't auto-submit on first pick).
+    const anyMultiSelect = questionsArr.some(isQuestionMulti);
+    const requireExplicitSubmit = isMultiQuestion || anyMultiSelect;
+    const allAnswered = questionsArr.every((_, i) => (pickedByQuestion[i] ?? []).length > 0);
+    const sent = submittedAnswer != null || isAnswered;
+
+    const handlePick = (qIdx: number, label: string) => {
+      if (sent) return;
+      const q = questionsArr[qIdx];
+      const multi = isQuestionMulti(q);
+      setPickedByQuestion(prev => {
+        const current = prev[qIdx] ?? [];
+        let next: string[];
+        if (multi) {
+          // Toggle: add if not present, remove if present
+          next = current.includes(label) ? current.filter(x => x !== label) : [...current, label];
+        } else {
+          // Single-select: replace
+          next = [label];
+        }
+        return { ...prev, [qIdx]: next };
+      });
+      // Auto-submit ONLY for the simplest case: one question, single-select.
+      if (!requireExplicitSubmit) {
+        setSubmittedAnswer(label);
+        onAnswerQuestion(label);
+      }
+    };
+
+    const formatSubmission = (picks: Record<number, string[]>) => {
+      // Pull labels per question; join multi-select with ", "
+      return questionsArr.map((raw, i) => {
+        const q = typeof raw === 'string' ? { text: raw, header: undefined } : { text: raw.question || raw.header || '', header: raw.header };
+        const tag = q.header || q.text || `Q${i + 1}`;
+        const answers = picks[i] ?? [];
+        // For multi-question or multi-select, prefix with the question tag for clarity.
+        return isMultiQuestion ? `${tag}: ${answers.join(', ')}` : answers.join(', ');
+      }).join('\n');
+    };
+
+    const handleSubmit = () => {
+      if (sent || !allAnswered) return;
+      const combined = formatSubmission(pickedByQuestion);
+      setSubmittedAnswer(combined);
+      onAnswerQuestion(combined);
+    };
+
+    return (
+      <div className="rounded-lg p-3 text-sm flex items-start gap-2"
+        style={{ background: 'rgba(129,140,248,0.06)', border: '1px solid rgba(129,140,248,0.20)' }}>
+        <HelpCircle className="h-4 w-4 mt-0.5 shrink-0 text-indigo-400" />
+        <div className="flex-1 min-w-0 space-y-3">
+          <p className="text-xs font-medium text-indigo-300/90">
+            Claude is asking…
+            {requireExplicitSubmit && (
+              <span className="ml-2 text-[10px] text-muted-foreground/70 normal-case font-normal">
+                {anyMultiSelect && isMultiQuestion ? 'select per question (some allow multiple), then submit'
+                  : anyMultiSelect ? 'pick one or more, then submit'
+                  : 'pick one per question, then submit'}
+              </span>
+            )}
+          </p>
+          {questionsArr.map((raw, qi) => {
+            const q = typeof raw === 'string'
+              ? { text: raw, header: undefined, options: undefined as Array<string | { label?: string; description?: string }> | undefined, multiSelect: false }
+              : { text: raw.question || raw.header || '', header: raw.header, options: raw.options, multiSelect: !!raw.multiSelect };
+            const picks = pickedByQuestion[qi] ?? [];
+            return (
+              <div key={qi} className={qi > 0 ? 'pt-3 border-t border-white/[0.06]' : ''}>
+                {q.header && q.header !== q.text && (
+                  <p className="text-[10px] text-muted-foreground mb-1 uppercase tracking-wide font-medium">
+                    {q.header}
+                  </p>
+                )}
+                <p className="text-xs font-medium text-foreground/90 leading-relaxed flex items-center gap-1.5 flex-wrap">
+                  <span>{q.text}</span>
+                  {q.multiSelect && (
+                    <span className="text-[8px] px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300/80 font-normal uppercase tracking-wide shrink-0">
+                      multi-select
+                    </span>
+                  )}
+                </p>
+                {q.options && q.options.length > 0 && (
+                  <div className="mt-2 flex flex-col gap-1.5">
+                    {q.options.map((opt, oi) => {
+                      const label = typeof opt === 'string' ? opt : (opt.label || JSON.stringify(opt));
+                      const desc  = typeof opt === 'string' ? undefined : opt.description;
+                      const isThis = picks.includes(label);
+                      // Before submit: keep all options clickable so user can toggle (multi) or change (single).
+                      // After submit: dim non-chosen, lock all.
+                      const isDim  = sent && !isThis;
+                      const disabled = sent;
+                      return (
+                        <button
+                          key={oi}
+                          type="button"
+                          disabled={disabled}
+                          onClick={() => handlePick(qi, label)}
+                          className={`text-left rounded px-1.5 py-1 -mx-1.5 transition-opacity ${
+                            isDim ? 'opacity-30' : 'hover:bg-white/[0.04]'
+                          } ${disabled ? 'cursor-default' : 'cursor-pointer'}`}
+                        >
+                          <span className="flex items-baseline gap-2">
+                            <span
+                              className="text-[10px] px-2 py-0.5 rounded border font-mono shrink-0 transition-all"
+                              style={{
+                                borderColor: isThis ? '#818CF8' : 'rgba(129,140,248,0.40)',
+                                color: isThis ? '#fff' : '#A5B4FC',
+                                background: isThis ? '#818CF8' : 'rgba(129,140,248,0.10)',
+                              }}
+                            >
+                              {label}
+                            </span>
+                            {desc && <span className="text-[10px] text-muted-foreground/70 text-left">{desc}</span>}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+
+          {/* Submit button — shown when explicit submit is required (multi-question or any multi-select). */}
+          {requireExplicitSubmit && !sent && (() => {
+            const answeredQuestionCount = questionsArr.filter((_, i) => (pickedByQuestion[i] ?? []).length > 0).length;
+            return (
+              <div className="flex items-center gap-2 pt-1">
+                <button
+                  type="button"
+                  disabled={!allAnswered}
+                  onClick={handleSubmit}
+                  className="text-[11px] px-3 py-1 rounded font-medium transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                  style={{
+                    background: allAnswered ? '#818CF8' : 'rgba(129,140,248,0.20)',
+                    color: allAnswered ? '#fff' : '#A5B4FC',
+                    border: '1px solid rgba(129,140,248,0.40)',
+                  }}
+                >
+                  {isMultiQuestion
+                    ? `Submit ${answeredQuestionCount}/${questionsArr.length}`
+                    : 'Submit'}
+                </button>
+                <span className="text-[10px] text-muted-foreground/60">
+                  {allAnswered ? 'ready to send' :
+                    isMultiQuestion
+                      ? `${questionsArr.length - answeredQuestionCount} remaining`
+                      : 'pick at least one option'}
+                </span>
+              </div>
+            );
+          })()}
+
+          {sent && (
+            <p className="text-[10px] text-emerald-400/80">
+              ✓ Sent
+              {!isMultiQuestion && !anyMultiSelect && submittedAnswer && (
+                <>: <span className="font-mono">{submittedAnswer}</span></>
+              )}
+            </p>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   // Determine outcome label + colors
   let outcomeLabel: string;
@@ -546,31 +1003,38 @@ function PermissionDenialCard({ msg, onRetry }: { msg: ChatMessage; onRetry?: (m
           </div>
         )}
 
-        {/* Permission retry options — show whenever onRetry is available */}
-        {onRetry && (
-          <div className="flex items-center gap-2 mt-2.5 flex-wrap">
-            <button
-              onClick={() => onRetry('default')}
-              className="text-[11px] px-2.5 py-1 rounded-md font-medium transition-all hover:opacity-80 active:scale-95"
-              style={{ background: 'rgba(52,211,153,0.12)', color: '#34D399', border: '1px solid rgba(52,211,153,0.35)' }}
-            >
-              Yes, allow once
-            </button>
-            <button
-              onClick={() => onRetry('acceptEdits')}
-              className="text-[11px] px-2.5 py-1 rounded-md font-medium transition-all hover:opacity-80 active:scale-95"
-              style={{ background: 'rgba(245,158,11,0.12)', color: '#F59E0B', border: '1px solid rgba(245,158,11,0.35)' }}
-            >
-              Allow file edits
-            </button>
-            <button
-              onClick={() => onRetry('dangerouslySkipPermissions')}
-              className="text-[11px] px-2.5 py-1 rounded-md font-medium transition-all hover:opacity-80 active:scale-95"
-              style={{ background: 'rgba(239,68,68,0.12)', color: '#EF4444', border: '1px solid rgba(239,68,68,0.35)' }}
-            >
-              Allow all ⚠
-            </button>
-          </div>
+        {/* Permission retry options — only on live cards, never on historical reload. After
+            an Allow button is clicked, the card freezes and shows a confirmation badge. */}
+        {!isHistorical && onRetry && (
+          approvedRetryMode ? (
+            <p className="mt-2.5 text-[11px] text-emerald-400/80">
+              ✓ Allowed ({approveLabel(approvedRetryMode)})
+            </p>
+          ) : (
+            <div className="flex items-center gap-2 mt-2.5 flex-wrap">
+              <button
+                onClick={() => handleApprove('default')}
+                className="text-[11px] px-2.5 py-1 rounded-md font-medium transition-all hover:opacity-80 active:scale-95"
+                style={{ background: 'rgba(52,211,153,0.12)', color: '#34D399', border: '1px solid rgba(52,211,153,0.35)' }}
+              >
+                Yes, allow once
+              </button>
+              <button
+                onClick={() => handleApprove('acceptEdits')}
+                className="text-[11px] px-2.5 py-1 rounded-md font-medium transition-all hover:opacity-80 active:scale-95"
+                style={{ background: 'rgba(245,158,11,0.12)', color: '#F59E0B', border: '1px solid rgba(245,158,11,0.35)' }}
+              >
+                Allow file edits
+              </button>
+              <button
+                onClick={() => handleApprove('dangerouslySkipPermissions')}
+                className="text-[11px] px-2.5 py-1 rounded-md font-medium transition-all hover:opacity-80 active:scale-95"
+                style={{ background: 'rgba(239,68,68,0.12)', color: '#EF4444', border: '1px solid rgba(239,68,68,0.35)' }}
+              >
+                Allow all ⚠
+              </button>
+            </div>
+          )
         )}
       </div>
     </div>
@@ -694,7 +1158,17 @@ function ApiErrorCard({ content }: { content: string }) {
   );
 }
 
-const MessageBubble = memo(function MessageBubble({ msg, onRetry }: { msg: ChatMessage; onRetry?: (mode: RetryMode) => void }) {
+const MessageBubble = memo(function MessageBubble({
+  msg,
+  onRetry,
+  onAnswerQuestion,
+  isAnswered,
+}: {
+  msg: ChatMessage;
+  onRetry?: (mode: RetryMode, allowedTools?: string[]) => void;
+  onAnswerQuestion?: (toolUseId: string, answer: string) => void;
+  isAnswered?: boolean;
+}) {
   const [lightbox, setLightbox] = useState<{ data: string; mediaType: string } | null>(null);
 
   if (msg.role === 'user') {
@@ -819,9 +1293,34 @@ const MessageBubble = memo(function MessageBubble({ msg, onRetry }: { msg: ChatM
     );
   }
 
-  if (msg.role === 'tool') return <div className="my-2 px-4"><div className="max-w-[88%]"><ChatToolCard msg={msg} /></div></div>;
+  if (msg.role === 'tool') {
+    // AskUserQuestion gets a dedicated interactive permission card. Suppress the
+    // duplicate tool card so the question doesn't appear twice in the chat.
+    if (msg.toolName === 'AskUserQuestion') return null;
+    return <div className="my-2 px-4"><div className="max-w-[88%]"><ChatToolCard msg={msg} onAnswerQuestion={onAnswerQuestion} isAnswered={isAnswered} /></div></div>;
+  }
 
-  if (msg.role === 'permission_denial') return <div className="my-2 px-4"><PermissionDenialCard msg={msg} onRetry={onRetry} /></div>;
+  if (msg.role === 'permission_denial') {
+    const card = (
+      <PermissionDenialCard
+        msg={msg}
+        onRetry={onRetry}
+        onAnswerQuestion={onAnswerQuestion ? (a) => onAnswerQuestion(msg.id, a) : undefined}
+        isAnswered={isAnswered}
+      />
+    );
+    // Live cards centered as "system needs your input" interstitial; historical
+    // cards keep the old left-aligned chat-message layout so they don't disrupt
+    // the scrollback look on reload.
+    if (msg.isHistorical) {
+      return <div className="my-2 px-4">{card}</div>;
+    }
+    return (
+      <div className="my-3 px-4 flex justify-center">
+        <div className="w-full max-w-[640px]">{card}</div>
+      </div>
+    );
+  }
 
   if (msg.role === 'permission_change') {
     const mode = msg.permissionMode ?? msg.content;
@@ -939,6 +1438,116 @@ const QUICK_PROMPTS = [
   'Fix any failing tests',
 ];
 
+// ─── Tab right-click context menu (portaled, top-level component) ─────────────
+
+interface TabContextMenuPortalProps {
+  ctx: { x: number; y: number; path: string } | null;
+  openTabs: OpenFile[];
+  editedBuffers: Map<string, string>;
+  effectiveDir: string;
+  onClose: () => void;
+  onCloseTab: (path: string) => void;
+  onCloseOthers: (path: string) => void;
+  onCloseRight: (path: string) => void;
+  onCloseSaved: () => void;
+  onCloseAll: () => void;
+  onMentionFile: (path: string) => void;
+  onMoveTab: (path: string, dir: -1 | 1) => void;
+  onRevealInTree: (path: string) => void;
+  onOpenPreview: (path: string) => void;
+  onFormat: (path: string) => void;
+}
+
+function TabContextMenuPortal(props: TabContextMenuPortalProps) {
+  const { ctx, openTabs, editedBuffers, effectiveDir, onClose } = props;
+  if (!ctx || typeof window === 'undefined') return null;
+
+  const path = ctx.path;
+  const idx = openTabs.findIndex(t => t.path === path);
+  const tab = openTabs[idx];
+  const hasRight = idx >= 0 && idx < openTabs.length - 1;
+  const hasLeft  = idx > 0;
+  const hasOthers = openTabs.length > 1;
+  const hasSavedToClose = openTabs.some(t => {
+    const buf = editedBuffers.get(t.path);
+    return buf === undefined || buf === t.content;
+  });
+  const relPath = effectiveDir && path.startsWith(effectiveDir + '/') ? path.slice(effectiveDir.length + 1) : path;
+  const isMarkdown = !!tab && tab.name.toLowerCase().endsWith('.md');
+  const isFormatable = !!tab && !tab.isBinary && !tab.isPdf && !tab.isImage && !tab.tooLarge;
+
+  const Btn = ({
+    label, onAction, disabled = false, danger = false,
+  }: { label: string; onAction: () => void; disabled?: boolean; danger?: boolean }) => (
+    <button
+      type="button"
+      disabled={disabled}
+      onMouseDown={(e) => { e.stopPropagation(); }}
+      onClick={(e) => {
+        e.stopPropagation();
+        if (!disabled) onAction();
+        onClose();
+      }}
+      className={cn(
+        'w-full text-left px-3 py-1.5 text-xs transition-colors',
+        disabled
+          ? 'text-muted-foreground/40 cursor-not-allowed'
+          : danger
+            ? 'text-rose-400 hover:bg-rose-500/10'
+            : 'hover:bg-muted/40 text-foreground/90'
+      )}
+    >
+      {label}
+    </button>
+  );
+  const Sep = () => <div className="h-px bg-border/50 my-1" />;
+
+  return createPortal(
+    <div
+      className="fixed z-[300] bg-card border border-border/80 rounded-lg shadow-2xl py-1 min-w-[220px] overflow-hidden"
+      style={{ left: ctx.x, top: ctx.y }}
+      onMouseDown={(e) => e.stopPropagation()}
+      onClick={(e) => e.stopPropagation()}
+      onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); }}
+    >
+      {tab && (
+        <div className="px-3 py-1.5 mb-0.5 flex items-center gap-2 border-b border-border/60">
+          <FileIcon name={tab.name} />
+          <span className="text-[11px] font-mono truncate text-foreground/80">{tab.name}</span>
+        </div>
+      )}
+
+      {/* Close group */}
+      <Btn label="Close"               onAction={() => props.onCloseTab(path)} />
+      <Btn label="Close Others"        disabled={!hasOthers}      onAction={() => props.onCloseOthers(path)} />
+      <Btn label="Close to the Right"  disabled={!hasRight}       onAction={() => props.onCloseRight(path)} />
+      <Btn label="Close Saved"         disabled={!hasSavedToClose} onAction={() => props.onCloseSaved()} />
+      <Btn label="Close All"           danger                     onAction={() => props.onCloseAll()} />
+
+      <Sep />
+
+      {/* Copy / mention */}
+      <Btn label="Copy Path"           onAction={() => navigator.clipboard.writeText(relPath)} />
+      <Btn label="Copy Full Path"      onAction={() => navigator.clipboard.writeText(path)} />
+      <Btn label="Add File to Chat"    disabled={!effectiveDir}   onAction={() => props.onMentionFile(path)} />
+
+      <Sep />
+
+      {/* Reorder */}
+      <Btn label="Move to Left"        disabled={!hasLeft}        onAction={() => props.onMoveTab(path, -1)} />
+      <Btn label="Move to Right"       disabled={!hasRight}       onAction={() => props.onMoveTab(path,  1)} />
+
+      <Sep />
+
+      {/* Open / format */}
+      <Btn label="Reveal in File Explorer" onAction={() => props.onRevealInTree(path)} />
+      <Btn label="Open Preview"            disabled={!isMarkdown}    onAction={() => props.onOpenPreview(path)} />
+      <Btn label="Format File Content"     disabled={!isFormatable}  onAction={() => props.onFormat(path)} />
+    </div>,
+    document.body,
+  );
+}
+
 // ─── Main component ────────────────────────────────────────────────────────────
 
 export function ChatClient({
@@ -958,9 +1567,32 @@ export function ChatClient({
   const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set());
   const [treeChildrenMap, setTreeChildrenMap] = useState<Map<string, TreeEntry[]>>(new Map());
   const [treeLoading, setTreeLoading] = useState(false);
-  const [openFile, setOpenFile] = useState<OpenFile | null>(null);
+  // Open tabs (VS Code-style multi-file editor)
+  const [openTabs, setOpenTabs] = useState<OpenFile[]>([]);
+  const [activeTabPath, setActiveTabPath] = useState<string | null>(null);
+  // Per-tab edited buffer (unsaved content keyed by path)
+  const [editedBuffers, setEditedBuffers] = useState<Map<string, string>>(new Map());
+  // Tab right-click context menu
+  const [tabContextMenu, setTabContextMenu] = useState<{ x: number; y: number; path: string } | null>(null);
+
+  // Derived: active tab and its edited content (keeps existing JSX referencing openFile/editedContent working)
+  const openFile = useMemo(
+    () => activeTabPath ? (openTabs.find(t => t.path === activeTabPath) ?? null) : null,
+    [openTabs, activeTabPath],
+  );
+  const editedContent = activeTabPath
+    ? (editedBuffers.get(activeTabPath) ?? openFile?.content ?? '')
+    : '';
+  const setEditedContent = useCallback((v: string) => {
+    if (!activeTabPath) return;
+    setEditedBuffers(prev => {
+      const next = new Map(prev);
+      next.set(activeTabPath, v);
+      return next;
+    });
+  }, [activeTabPath]);
+
   const [fileLoading, setFileLoading] = useState(false);
-  const [editedContent, setEditedContent] = useState('');
   const [saving, setSaving] = useState(false);
   const [savedFlash, setSavedFlash] = useState(false);
   const [mdPreview, setMdPreview] = useState<'edit' | 'preview' | 'split'>('edit');
@@ -981,6 +1613,10 @@ export function ChatClient({
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [loadingSession, setLoadingSession] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
+  // Transient status line shown while waiting for / processing Claude's response
+  // (e.g., "Thinking…", "Running command…", "Reading client.tsx…"). Derived
+  // client-side from stream events — same approach as the VS Code extension.
+  const [streamingStatus, setStreamingStatus] = useState<string | null>(null);
   const [prompt, setPrompt] = useState('');
   const [sessionCost, setSessionCost] = useState(0);
   const [copied, setCopied] = useState(false);
@@ -1016,6 +1652,43 @@ export function ChatClient({
   const [cmdSelectedIdx, setCmdSelectedIdx] = useState(0);
   const [dynamicCmds, setDynamicCmds] = useState<SlashCommand[]>([]);
 
+  // Composer model picker popover (portaled to body to escape composer's overflow-hidden)
+  const [showModelPicker, setShowModelPicker] = useState(false);
+  const [modelPickerRect, setModelPickerRect] = useState<DOMRect | null>(null);
+  const modelPickerBtnRef = useRef<HTMLButtonElement>(null);
+  const modelPickerPanelRef = useRef<HTMLDivElement>(null);
+
+  // Drag-from-tree → drop-on-composer indicator
+  const [isDragOverComposer, setIsDragOverComposer] = useState(false);
+  // Drop-target highlight when dragging a tree file over the editor panel
+  const [isDragOverEditor, setIsDragOverEditor] = useState(false);
+  // Drag-to-reorder tab: insertion index indicator (null = no drag in progress)
+  const [tabDragInsertIdx, setTabDragInsertIdx] = useState<number | null>(null);
+
+  // "Add to Chat" floating pill on Monaco text selection
+  const [selectionPopover, setSelectionPopover] = useState<{
+    top: number;
+    left: number;
+    text: string;
+    startLine: number;
+    endLine: number;
+    relPath: string;
+    lang: string;
+  } | null>(null);
+
+  // Monaco editor instance (kept in a ref so tab-context-menu actions can reach it)
+  const monacoEditorRef = useRef<{ getAction?: (id: string) => { run: () => void } | null } | null>(null);
+
+  // Active stream id (returned by /api/chat/stream's first `stream_init` event).
+  // Used by /api/chat/respond to address the running subprocess for AskUserQuestion answers.
+  const streamIdRef = useRef<string | null>(null);
+  // Tool_use ids that have already been answered (avoids double-click sending two answers).
+  const [answeredToolUseIds, setAnsweredToolUseIds] = useState<Set<string>>(new Set());
+
+  // Always-fresh closure for "close the active tab" — read by Monaco's Cmd+W command
+  // (registered once at mount; can't capture stale state through normal closure).
+  const closeActiveTabRef = useRef<() => void>(() => {});
+
   // File mention picker (@ references)
   const [showFilePicker, setShowFilePicker] = useState(false);
   const [filePickerQuery, setFilePickerQuery] = useState('');
@@ -1047,6 +1720,79 @@ export function ChatClient({
     fetch('/api/chat/directories').then(r => r.json()).then(setDirectories).catch(() => {});
   }, []);
 
+  // Composer model picker — close on outside click / Escape. Click-outside check
+  // covers BOTH the trigger button and the portaled panel.
+  useEffect(() => {
+    if (!showModelPicker) return;
+    const onClick = (e: MouseEvent) => {
+      const target = e.target as Node;
+      const inBtn = modelPickerBtnRef.current?.contains(target);
+      const inPanel = modelPickerPanelRef.current?.contains(target);
+      if (!inBtn && !inPanel) setShowModelPicker(false);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setShowModelPicker(false); };
+    document.addEventListener('mousedown', onClick);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onClick);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [showModelPicker]);
+
+  // "Add to Chat" pill — Escape to dismiss
+  useEffect(() => {
+    if (!selectionPopover) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setSelectionPopover(null); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [selectionPopover]);
+
+  // Tab context menu — close on outside click / Escape.
+  // Defer the click/contextmenu listeners by one tick so the right-click
+  // that opened the menu doesn't immediately close it.
+  useEffect(() => {
+    if (!tabContextMenu) return;
+    const close = () => setTabContextMenu(null);
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') close(); };
+    let installed = false;
+    const timer = setTimeout(() => {
+      window.addEventListener('click', close);
+      window.addEventListener('contextmenu', close);
+      installed = true;
+    }, 0);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      clearTimeout(timer);
+      if (installed) {
+        window.removeEventListener('click', close);
+        window.removeEventListener('contextmenu', close);
+      }
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [tabContextMenu]);
+
+  // Re-focus the chat textarea when streaming finishes. Browsers blur disabled
+  // elements automatically, so as soon as we flip `disabled` off (on the result
+  // event) we want focus to return without the user clicking back in.
+  const wasStreamingRef = useRef(false);
+  useEffect(() => {
+    if (wasStreamingRef.current && !isStreaming) {
+      // Defer to next tick so React has applied the `disabled={false}` first
+      setTimeout(() => textareaRef.current?.focus(), 0);
+    }
+    wasStreamingRef.current = isStreaming;
+  }, [isStreaming]);
+
+  // Auto-grow textarea whenever `prompt` changes — including programmatic inserts
+  // (drag-drop, slash commands, "Add to Chat"). Native onChange already handles
+  // keyboard typing; this catches the cases that bypass it.
+  useLayoutEffect(() => {
+    const ta = textareaRef.current;
+    if (!ta) return;
+    ta.style.height = 'auto';
+    ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
+  }, [prompt]);
+
   // Dismiss context menu on outside click / Escape
   useEffect(() => {
     if (!contextMenu) return;
@@ -1074,7 +1820,10 @@ export function ChatClient({
     setTreeLoading(true);
     setExpandedDirs(new Set());
     setTreeChildrenMap(new Map());
-    setOpenFile(null);
+    // Inline close-all (closeAllTabs helper is declared after this effect)
+    setOpenTabs([]);
+    setActiveTabPath(null);
+    setEditedBuffers(new Map());
     loadTreeDir(effectiveDir).then(entries => { setTreeEntries(entries); setTreeLoading(false); }).catch(() => setTreeLoading(false));
   }, [effectiveDir, loadTreeDir]);
 
@@ -1099,32 +1848,214 @@ export function ChatClient({
     });
   }, [loadTreeDir]);
 
+  // Tab helpers — VS Code-style
+  const closeTab = useCallback((path: string) => {
+    setOpenTabs(prev => {
+      const idx = prev.findIndex(t => t.path === path);
+      if (idx === -1) return prev;
+      const next = prev.filter(t => t.path !== path);
+      // If closing the active tab, activate its right neighbor (or left if no right)
+      if (activeTabPath === path) {
+        const newActive = next[idx]?.path ?? next[idx - 1]?.path ?? null;
+        setActiveTabPath(newActive);
+      }
+      return next;
+    });
+    setEditedBuffers(prev => {
+      if (!prev.has(path)) return prev;
+      const next = new Map(prev);
+      next.delete(path);
+      return next;
+    });
+  }, [activeTabPath]);
+
+  const closeOtherTabs = useCallback((keepPath: string) => {
+    setOpenTabs(prev => prev.filter(t => t.path === keepPath));
+    setActiveTabPath(keepPath);
+    setEditedBuffers(prev => {
+      const next = new Map<string, string>();
+      if (prev.has(keepPath)) next.set(keepPath, prev.get(keepPath)!);
+      return next;
+    });
+  }, []);
+
+  const closeTabsToRight = useCallback((path: string) => {
+    setOpenTabs(prev => {
+      const idx = prev.findIndex(t => t.path === path);
+      if (idx === -1) return prev;
+      const keep = prev.slice(0, idx + 1);
+      const keepPaths = new Set(keep.map(t => t.path));
+      if (activeTabPath && !keepPaths.has(activeTabPath)) setActiveTabPath(path);
+      setEditedBuffers(prevB => {
+        const next = new Map<string, string>();
+        for (const t of keep) if (prevB.has(t.path)) next.set(t.path, prevB.get(t.path)!);
+        return next;
+      });
+      return keep;
+    });
+  }, [activeTabPath]);
+
+  const closeAllTabs = useCallback(() => {
+    setOpenTabs([]);
+    setActiveTabPath(null);
+    setEditedBuffers(new Map());
+  }, []);
+
+  // Close all tabs that have NO unsaved changes (dirty tabs stay).
+  const closeSavedTabs = useCallback(() => {
+    setOpenTabs(prev => {
+      const keep = prev.filter(t => {
+        const buf = editedBuffers.get(t.path);
+        return buf !== undefined && buf !== t.content;
+      });
+      const keepPaths = new Set(keep.map(t => t.path));
+      if (activeTabPath && !keepPaths.has(activeTabPath)) {
+        setActiveTabPath(keep[0]?.path ?? null);
+      }
+      setEditedBuffers(prevB => {
+        const next = new Map<string, string>();
+        for (const t of keep) if (prevB.has(t.path)) next.set(t.path, prevB.get(t.path)!);
+        return next;
+      });
+      return keep;
+    });
+  }, [editedBuffers, activeTabPath]);
+
+  // Swap tab with its neighbor (direction: -1 = left, +1 = right).
+  const moveTab = useCallback((path: string, direction: -1 | 1) => {
+    setOpenTabs(prev => {
+      const idx = prev.findIndex(t => t.path === path);
+      if (idx === -1) return prev;
+      const target = idx + direction;
+      if (target < 0 || target >= prev.length) return prev;
+      const next = [...prev];
+      [next[idx], next[target]] = [next[target], next[idx]];
+      return next;
+    });
+  }, []);
+
+  // Keep the close-active-tab ref in sync every render (Monaco's command callback
+  // is registered once at mount and would otherwise see stale state).
+  closeActiveTabRef.current = () => {
+    if (activeTabPath) closeTab(activeTabPath);
+  };
+
+  // Cmd/Ctrl+W → close the active editor tab. Two layers because the event can
+  // be intercepted at different points depending on focus:
+  //   1. Monaco-internal command (registered in onMount) handles it when focus is
+  //      inside the editor — Monaco normally swallows Cmd+W before window listeners.
+  //   2. Window-level capture listener handles every other focus state.
+  // Both call closeActiveTabRef.current().
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey)) return;
+      if (e.key.toLowerCase() !== 'w') return;
+      if (!activeTabPath) return;  // let the browser handle Cmd+W when no tab is open
+      e.preventDefault();
+      e.stopPropagation();
+      closeActiveTabRef.current();
+    };
+    window.addEventListener('keydown', onKey, { capture: true });
+    return () => window.removeEventListener('keydown', onKey, { capture: true });
+  }, [activeTabPath]);
+
+  // Drag-to-reorder: move `fromPath` to the given insertion index in openTabs.
+  const reorderTabs = useCallback((fromPath: string, insertIdx: number) => {
+    setOpenTabs(prev => {
+      const fromIdx = prev.findIndex(t => t.path === fromPath);
+      if (fromIdx === -1) return prev;
+      // Adjust insertIdx if we're moving rightward (the source removal shifts indices left)
+      let target = insertIdx;
+      if (fromIdx < target) target -= 1;
+      if (fromIdx === target) return prev;
+      const next = [...prev];
+      const [moved] = next.splice(fromIdx, 1);
+      next.splice(target, 0, moved);
+      return next;
+    });
+  }, []);
+
+  // Insert @relPath at the composer's cursor (used by "Add File to Chat" menu item).
+  // Mirrors the drag-drop pattern: tracks the file as a mention so backend resolves it.
+  const insertFileMention = useCallback((fullPath: string) => {
+    if (!effectiveDir) return;
+    const relPath = fullPath.startsWith(effectiveDir + '/') ? fullPath.slice(effectiveDir.length + 1) : fullPath;
+    const textarea = textareaRef.current;
+    const insertAt = textarea?.selectionStart ?? prompt.length;
+    const before = prompt.slice(0, insertAt);
+    const after = prompt.slice(insertAt);
+    const needSpaceBefore = before && !before.endsWith(' ') ? ' ' : '';
+    const needSpaceAfter = after && !after.startsWith(' ') ? ' ' : ' ';
+    const inserted = needSpaceBefore + '@' + relPath + needSpaceAfter;
+    setPrompt(before + inserted + after);
+    const newCursor = before.length + inserted.length;
+    setMentionedFiles(prev => prev.find(f => f.path === fullPath) ? prev : [...prev, { path: fullPath, relPath }]);
+    setTimeout(() => {
+      if (textarea) {
+        textarea.focus();
+        textarea.setSelectionRange(newCursor, newCursor);
+      }
+    }, 0);
+  }, [effectiveDir, prompt]);
+
+  // Open this tab and switch to markdown preview mode (no-op visually for non-.md files).
+  const openPreviewMode = useCallback((path: string) => {
+    if (activeTabPath !== path) setActiveTabPath(path);
+    setMdPreview('preview');
+  }, [activeTabPath]);
+
+  // Run Monaco's built-in formatter on the active editor model.
+  // The editor is single-instance, so switch to the right tab first if needed.
+  const formatFileContent = useCallback((path: string) => {
+    if (activeTabPath !== path) setActiveTabPath(path);
+    // Tiny delay so Monaco picks up the new value/language before formatting
+    setTimeout(() => {
+      const action = monacoEditorRef.current?.getAction?.('editor.action.formatDocument');
+      action?.run();
+    }, 50);
+  }, [activeTabPath]);
+
   const openFileContent = useCallback(async (path: string) => {
+    const isNotebook = path.endsWith('.ipynb');
+    // Already open → just activate it
+    if (openTabs.find(t => t.path === path)) {
+      setActiveTabPath(path);
+      setMdPreview(isNotebook ? 'preview' : 'edit');
+      return;
+    }
     setFileLoading(true);
     try {
       const res = await fetch(`/api/chat/filecontent?path=${encodeURIComponent(path)}`);
       const data = await res.json();
       const file = { path, name: path.split('/').pop() || path, ...data } as OpenFile;
-      setOpenFile(file);
-      setEditedContent(data.content || '');
-      setMdPreview('edit');
+      setOpenTabs(prev => [...prev, file]);
+      setEditedBuffers(prev => {
+        const next = new Map(prev);
+        next.set(path, data.content || '');
+        return next;
+      });
+      setActiveTabPath(path);
+      setMdPreview(isNotebook ? 'preview' : 'edit');
     } catch { /* silent */ } finally {
       setFileLoading(false);
     }
-  }, []);
+  }, [openTabs]);
 
   const saveFile = useCallback(async () => {
     if (!openFile || saving) return;
+    const path = openFile.path;
+    const content = editedContent;
     setSaving(true);
     try {
       const res = await fetch('/api/chat/filecontent', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path: openFile.path, content: editedContent }),
+        body: JSON.stringify({ path, content }),
       });
       const data = await res.json();
       if (data.ok) {
-        setOpenFile(prev => prev ? { ...prev, content: editedContent, size: data.size, lines: data.lines } : prev);
+        // Update the saved tab's content snapshot (so dirty indicator clears)
+        setOpenTabs(prev => prev.map(t => t.path === path ? { ...t, content, size: data.size, lines: data.lines } : t));
         setSavedFlash(true);
         setTimeout(() => setSavedFlash(false), 1500);
       }
@@ -1366,13 +2297,23 @@ export function ChatClient({
       });
       if (res.ok) {
         await reloadDir(parentDir);
-        if (openFile?.path === renamingPath) {
-          setOpenFile(prev => prev ? { ...prev, path: newPath, name } : prev);
+        // Update any open tab whose path matches the renamed file
+        if (renamingPath) {
+          setOpenTabs(prev => prev.map(t => t.path === renamingPath ? { ...t, path: newPath, name } : t));
+          setEditedBuffers(prev => {
+            if (!prev.has(renamingPath)) return prev;
+            const next = new Map(prev);
+            const buf = next.get(renamingPath)!;
+            next.delete(renamingPath);
+            next.set(newPath, buf);
+            return next;
+          });
+          if (activeTabPath === renamingPath) setActiveTabPath(newPath);
         }
       }
     } catch { /* silent */ }
     cancelEdit();
-  }, [renamingPath, renameValue, openFile, reloadDir, cancelEdit]);
+  }, [renamingPath, renameValue, activeTabPath, reloadDir, cancelEdit]);
 
   const copySessionId = () => {
     if (!currentSessionId) return;
@@ -1386,33 +2327,119 @@ export function ChatClient({
   const executeSlashCommand = useCallback((name: string) => {
     setShowCmdPalette(false);
     setPrompt('');
+
+    const sysMsg = (content: string) => setMessages(prev => [...prev, {
+      id: uuid(), role: 'system' as const, content, timestamp: new Date(),
+    }]);
+
     switch (name) {
       case 'clear':
         setMessages([]);
         setCurrentSessionId(null);
         router.push('/chat', { scroll: false });
         break;
-      case 'help':
-        setMessages(prev => [...prev, {
-          id: crypto.randomUUID(), role: 'system' as const,
-          content: 'Commands: /clear /compact /cost /help /init /memory /model /review  |  Type @ to reference a file  |  Paste or drag images to attach them',
-          timestamp: new Date(),
-        }]);
+
+      case 'help': {
+        const lines = [
+          'Available slash commands:',
+          '',
+          '  Local (handled here):',
+          '    /clear     — clear the conversation',
+          '    /cost      — show session cost',
+          '    /context   — show context-window usage on the latest turn',
+          '    /usage     — per-token-type breakdown for this session',
+          '    /status    — session status (id, age, turns, cost)',
+          '    /export    — download this session as a shareable HTML file',
+          '    /sessions  — open the sessions list',
+          '    /model     — change the model',
+          '    /help      — this list',
+          '',
+          '  Forwarded to Claude:',
+          '    /compact /review /init /memory /resume /todos /add-dir',
+          '',
+          'Tip: type @ to reference a file · paste or drag images to attach.',
+        ];
+        sysMsg(lines.join('\n'));
         break;
+      }
+
       case 'cost':
-        setMessages(prev => [...prev, {
-          id: crypto.randomUUID(), role: 'system' as const,
-          content: `Session cost: ${formatCost(sessionCost)}`,
-          timestamp: new Date(),
-        }]);
+        sysMsg(`Session cost: ${formatCost(sessionCost)}`);
         break;
+
+      case 'context': {
+        const lastA = [...messages].reverse().find(
+          m => m.role === 'assistant' && (m.inputTokens || m.cacheCreationTokens || m.cacheReadTokens)
+        );
+        if (!lastA) {
+          sysMsg('No turns yet — context usage will appear after the first assistant response.');
+        } else {
+          const used = (lastA.inputTokens ?? 0) + (lastA.cacheCreationTokens ?? 0) + (lastA.cacheReadTokens ?? 0);
+          const pct = Math.round(used / CONTEXT_WINDOW * 100);
+          sysMsg(
+            `Context (latest turn): ${formatTokens(used)} / ${formatTokens(CONTEXT_WINDOW)} (${pct}% used · ${100 - pct}% until auto-compact)\n` +
+            `Click the ring at the top of the composer — or run /compact — to summarise the conversation now.`
+          );
+        }
+        break;
+      }
+
+      case 'usage': {
+        if (!activeSession) { sysMsg('No active session yet.'); break; }
+        const i  = activeSession.input_tokens ?? 0;
+        const o  = activeSession.output_tokens ?? 0;
+        const cw = activeSession.cache_creation_tokens ?? 0;
+        const cr = activeSession.cache_read_tokens ?? 0;
+        const totalCost = calcCost(i, o, cw, cr, activeSession.model);
+        const lines = [
+          'Session usage:',
+          `  Input        ${formatTokens(i).padStart(8)}    ${formatCost(calcCost(i, 0, 0, 0, activeSession.model))}`,
+          `  Output       ${formatTokens(o).padStart(8)}    ${formatCost(calcCost(0, o, 0, 0, activeSession.model))}`,
+          `  Cache write  ${formatTokens(cw).padStart(8)}    ${formatCost(calcCost(0, 0, cw, 0, activeSession.model))}`,
+          `  Cache read   ${formatTokens(cr).padStart(8)}    ${formatCost(calcCost(0, 0, 0, cr, activeSession.model))}`,
+          `  ─────────────────────────────────────`,
+          `  Total                  ${formatCost(totalCost)}`,
+        ];
+        sysMsg(lines.join('\n'));
+        break;
+      }
+
+      case 'status': {
+        if (!activeSession) { sysMsg('No active session yet.'); break; }
+        const id    = activeSession.session_id?.slice(0, 8) ?? '—';
+        const age   = activeSession.duration_seconds ? formatDuration(activeSession.duration_seconds) : '—';
+        const turns = activeSession.event_count ?? 0;
+        const cost  = formatCost(calcCost(
+          activeSession.input_tokens ?? 0, activeSession.output_tokens ?? 0,
+          activeSession.cache_creation_tokens ?? 0, activeSession.cache_read_tokens ?? 0,
+          activeSession.model,
+        ));
+        const model = activeSession.model?.replace('claude-', '').replace(/-\d{8}$/, '') ?? 'default';
+        const errs  = activeSession.error_count ?? 0;
+        sysMsg(`Session ${id} · age ${age} · ${turns} events · ${cost} · ${model}${errs > 0 ? ` · ${errs} error${errs !== 1 ? 's' : ''}` : ''}`);
+        break;
+      }
+
+      case 'export': {
+        if (!currentSessionId) { sysMsg('No active session yet — start a turn first.'); break; }
+        window.open(`/api/sessions/${currentSessionId}/export`, '_blank');
+        sysMsg('Opening HTML export in a new tab…');
+        break;
+      }
+
+      case 'sessions':
+        router.push('/sessions');
+        break;
+
       case 'model':
         setShowSettings(true);
         break;
+
       default:
+        // Forwarded to the CLI subprocess
         sendMessageCore(`/${name}`, [], []);
     }
-  }, [router, sessionCost]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [router, sessionCost, messages, activeSession, currentSessionId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ─── @ file mention ────────────────────────────────────────────────────────
 
@@ -1487,11 +2514,69 @@ export function ChatClient({
   }, [addImageFile]);
 
   const handleDrop = useCallback((e: React.DragEvent<HTMLTextAreaElement>) => {
+    // Internal drag from the file tree — custom MIME carries the relative path.
+    // Inserted as @relPath at the cursor and tracked as a mentioned file so the
+    // backend resolves it the same way as a typed @mention.
+    const mention = e.dataTransfer.getData('application/x-chat-file-mention');
+    if (mention) {
+      e.preventDefault();
+      const textarea = textareaRef.current;
+      const insertAt = textarea?.selectionStart ?? prompt.length;
+      const before = prompt.slice(0, insertAt);
+      const after = prompt.slice(insertAt);
+      const needSpaceBefore = before && !before.endsWith(' ');
+      const needSpaceAfter = after && !after.startsWith(' ');
+      const inserted = (needSpaceBefore ? ' ' : '') + '@' + mention + (needSpaceAfter ? ' ' : ' ');
+      const newPrompt = before + inserted + after;
+      setPrompt(newPrompt);
+      const newCursor = before.length + inserted.length;
+      const fullPath = effectiveDir ? `${effectiveDir}/${mention}` : mention;
+      setMentionedFiles(prev => prev.find(f => f.path === fullPath) ? prev : [...prev, { path: fullPath, relPath: mention }]);
+      setTimeout(() => {
+        if (textarea) {
+          textarea.focus();
+          textarea.setSelectionRange(newCursor, newCursor);
+        }
+      }, 0);
+      return;
+    }
+    // External drop — image files from the OS
     const files = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/'));
     if (!files.length) return;
     e.preventDefault();
     files.slice(0, 4 - attachedImages.length).forEach(addImageFile);
-  }, [attachedImages.length, addImageFile]);
+  }, [attachedImages.length, addImageFile, prompt, effectiveDir]);
+
+  // Quote the currently-selected editor text into the composer.
+  // Mirrors the drag-drop insertion pattern: snippet at cursor + @mention tracking.
+  const addSelectionToChat = useCallback(() => {
+    if (!selectionPopover) return;
+    const { text, startLine, endLine, relPath, lang } = selectionPopover;
+    const lineRange = startLine === endLine ? `:${startLine}` : `:${startLine}-${endLine}`;
+    const snippet = `@${relPath}${lineRange}\n\n\`\`\`${lang}\n${text}\n\`\`\`\n`;
+
+    const textarea = textareaRef.current;
+    const insertAt = textarea?.selectionStart ?? prompt.length;
+    const before = prompt.slice(0, insertAt);
+    const after = prompt.slice(insertAt);
+    const needNewlineBefore = before && !before.endsWith('\n') ? '\n' : '';
+    const needNewlineAfter = after && !after.startsWith('\n') ? '\n' : '';
+    const inserted = needNewlineBefore + snippet + needNewlineAfter;
+    const newPrompt = before + inserted + after;
+    setPrompt(newPrompt);
+    const newCursor = before.length + inserted.length;
+
+    const fullPath = effectiveDir ? `${effectiveDir}/${relPath}` : relPath;
+    setMentionedFiles(prev => prev.find(f => f.path === fullPath) ? prev : [...prev, { path: fullPath, relPath }]);
+
+    setSelectionPopover(null);
+    setTimeout(() => {
+      if (textarea) {
+        textarea.focus();
+        textarea.setSelectionRange(newCursor, newCursor);
+      }
+    }, 0);
+  }, [selectionPopover, prompt, effectiveDir]);
 
   const stopStreaming = () => {
     abortRef.current?.abort();
@@ -1505,19 +2590,31 @@ export function ChatClient({
     imgs: Array<{ dataUrl: string; mimeType: string }>,
     files: Array<{ path: string; relPath: string }>,
     permissionModeOverride?: 'default' | 'acceptEdits' | 'dangerouslySkipPermissions',
+    options?: { isRetry?: boolean; allowedTools?: string[] },
   ) => {
     const dir = effectiveDir;
     if (!text.trim() || !dir || isStreaming) return;
     lastUserMsgRef.current = { text, imgs, files };
 
+    // If a previous stream is still open in the background (subprocess kept stdin
+    // alive after `result`), abort it cleanly before starting a new one. Otherwise
+    // we'd accumulate orphan subprocesses.
+    abortRef.current?.abort();
+
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
     setIsStreaming(true);
+    setStreamingStatus('Thinking…');
 
-    setMessages(prev => [...prev, {
-      id: crypto.randomUUID(), role: 'user', content: text, timestamp: new Date(),
-      attachedImages: imgs.map(i => i.dataUrl),
-      mentionedFiles: files.map(f => f.relPath),
-    }]);
+    // On retry (Allow buttons on permission card), skip adding a duplicate user
+    // bubble — the original "send" already added it, so adding again makes it
+    // look like the user typed twice.
+    if (!options?.isRetry) {
+      setMessages(prev => [...prev, {
+        id: uuid(), role: 'user', content: text, timestamp: new Date(),
+        attachedImages: imgs.map(i => i.dataUrl),
+        mentionedFiles: files.map(f => f.relPath),
+      }]);
+    }
 
     const abort = new AbortController();
     abortRef.current = abort;
@@ -1553,6 +2650,9 @@ export function ChatClient({
           model: selectedModel || undefined,
           maxBudget: maxBudget ? parseFloat(maxBudget) : undefined,
           images: imagePayload.length ? imagePayload : undefined,
+          // Pre-approved tool names for this turn (e.g., 'Bash' after the user clicks
+          // "Yes, allow once" on a permission denial card). Granular per-call grant.
+          allowedTools: options?.allowedTools && options.allowedTools.length > 0 ? options.allowedTools : undefined,
         }),
       });
 
@@ -1579,6 +2679,13 @@ export function ChatClient({
           if (!line.trim()) continue;
           try {
             const event = JSON.parse(line) as Record<string, unknown>;
+
+            // First event on every stream — establishes the stream_id for follow-up POSTs
+            if (event.type === 'stream_init') {
+              const ev = event as { stream_id?: string };
+              if (ev.stream_id) streamIdRef.current = ev.stream_id;
+              continue;
+            }
 
             if (event.type === 'system') {
               const ev = event as { subtype?: string; session_id?: string; slash_commands?: string[] };
@@ -1611,19 +2718,24 @@ export function ChatClient({
 
               if (textBlocks.length > 0) {
                 setMessages(prev => [...prev, {
-                  id: crypto.randomUUID(), role: 'assistant',
+                  id: uuid(), role: 'assistant',
                   content: textBlocks.map(b => b.text).join(''),
                   timestamp: new Date(),
                 }]);
+                // Once Claude starts producing text, no more "Thinking…" needed
+                setStreamingStatus(null);
               }
               for (const block of toolBlocks) {
-                const toolMsgId = crypto.randomUUID();
+                const toolMsgId = uuid();
                 if (block.id) pendingTools.set(block.id, toolMsgId);
                 setMessages(prev => [...prev, {
                   id: toolMsgId, role: 'tool', content: '',
                   toolName: block.name, toolInput: block.input,
                   toolOutput: null, isStreaming: true, timestamp: new Date(),
+                  toolUseId: block.id,
                 }]);
+                // Update status line to reflect the currently-running tool.
+                setStreamingStatus(formatToolStatus(block.name, block.input));
               }
               continue;
             }
@@ -1641,6 +2753,9 @@ export function ChatClient({
                 setMessages(prev => prev.map(m => m.id === toolMsgId ? { ...m, toolOutput: output, isStreaming: false, toolIsError: result.is_error ?? false } : m));
                 pendingTools.delete(result.tool_use_id);
               }
+              // After a tool returns, briefly show "Thinking…" again while Claude
+              // decides what to do next (next tool, or a final text response).
+              if (pendingTools.size === 0) setStreamingStatus('Thinking…');
               continue;
             }
 
@@ -1650,6 +2765,11 @@ export function ChatClient({
                 usage?: { input_tokens?: number; output_tokens?: number; cache_creation_input_tokens?: number; cache_read_input_tokens?: number };
                 permission_denials?: Array<{ tool_name: string; tool_input: Record<string, unknown> }>;
               };
+              // End-of-turn — enable the input + clear the status line. The stream
+              // stays open (subprocess keeps stdin open), so the finally-block's
+              // setIsStreaming(false) never runs on its own.
+              setIsStreaming(false);
+              setStreamingStatus(null);
               if (ev.total_cost_usd) setSessionCost(prev => prev + ev.total_cost_usd!);
               if (ev.usage) {
                 const { input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens } = ev.usage;
@@ -1667,8 +2787,26 @@ export function ChatClient({
                   });
                 });
               }
-              for (const denial of ev.permission_denials ?? []) {
-                setMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'permission_denial', content: `Permission denied: ${denial.tool_name}`, timestamp: new Date(), permissionDenial: denial }]);
+              // Bundle ALL permission denials from this event into a single message
+              // so the user sees one consolidated card with one set of action buttons,
+              // not N separate cards (was confusing when Claude requested permission
+              // for multiple tools in the same turn).
+              const denials = ev.permission_denials ?? [];
+              if (denials.length === 1) {
+                setMessages(prev => [...prev, {
+                  id: uuid(), role: 'permission_denial',
+                  content: `Permission denied: ${denials[0].tool_name}`,
+                  timestamp: new Date(),
+                  permissionDenial: denials[0],
+                }]);
+              } else if (denials.length > 1) {
+                const toolList = denials.map(d => d.tool_name).join(', ');
+                setMessages(prev => [...prev, {
+                  id: uuid(), role: 'permission_denial',
+                  content: `Permission denied: ${toolList}`,
+                  timestamp: new Date(),
+                  permissionDenials: denials,
+                }]);
               }
               continue;
             }
@@ -1678,14 +2816,14 @@ export function ChatClient({
               let display = `Error: ${message}`;
               if (message.includes('ENOENT') || message.toLowerCase().includes('not found')) display = 'Claude Code not installed. Run: npm i -g @anthropic-ai/claude-code';
               else if (message.toLowerCase().includes('auth')) display = 'Not authenticated. Run `claude auth login` in your terminal first.';
-              setMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'system', content: display, timestamp: new Date(), isError: true }]);
+              setMessages(prev => [...prev, { id: uuid(), role: 'system', content: display, timestamp: new Date(), isError: true }]);
             }
           } catch { /* skip malformed */ }
         }
       }
     } catch (err) {
       if ((err as Error).name === 'AbortError') return;
-      setMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'system', content: `Error: ${err instanceof Error ? err.message : 'Unknown error'}`, timestamp: new Date(), isError: true }]);
+      setMessages(prev => [...prev, { id: uuid(), role: 'system', content: `Error: ${err instanceof Error ? err.message : 'Unknown error'}`, timestamp: new Date(), isError: true }]);
     } finally {
       setIsStreaming(false);
       abortRef.current = null;
@@ -1706,11 +2844,34 @@ export function ChatClient({
     sendMessageCore(text, imgs, files);
   };
 
-  // Retry last user message with a different permission mode
-  const retryWithPermission = useCallback((mode: RetryMode) => {
+  // Answer an in-flight AskUserQuestion. Originally we POSTed to /api/chat/respond
+  // (writing tool_result via the open subprocess stdin), but that's fragile —
+  // the CLI may exit shortly after emitting `result`, in which case the stdin
+  // write silently no-ops and the answer never reaches Claude (UI shows "Sent"
+  // but on reload the answer is gone — see bug report).
+  //
+  // Fix: route the answer through the standard /api/chat/stream path, which
+  // spawns a fresh subprocess with --resume to continue the same session.
+  // The answer appears as a user message bubble (sendMessage handles that) and
+  // gets properly logged to the DB by the hook chain, surviving page reloads.
+  const answerInteractiveQuestion = useCallback((toolUseId: string, answer: string) => {
+    setAnsweredToolUseIds(prev => {
+      const next = new Set(prev);
+      next.add(toolUseId);
+      return next;
+    });
+    sendMessage(answer);
+  }, [sendMessage]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Retry last user message under a new permission posture.
+  // `mode` controls global permission mode (default/acceptEdits/dangerouslySkipPermissions).
+  // `allowedTools` (optional) pre-approves specific tools by name — passed when the user
+  // clicks "Yes, allow once" so the SPECIFIC denied tools succeed on retry, instead of
+  // hitting the same denial because the mode is unchanged.
+  const retryWithPermission = useCallback((mode: RetryMode, allowedTools?: string[]) => {
     const last = lastUserMsgRef.current;
     if (!last || isStreaming) return;
-    sendMessageCore(last.text, last.imgs, last.files, mode);
+    sendMessageCore(last.text, last.imgs, last.files, mode, { isRetry: true, allowedTools });
   }, [isStreaming]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const allCmds = [...SLASH_COMMANDS, ...dynamicCmds];
@@ -1843,11 +3004,21 @@ export function ChatClient({
 
         if (entry.type === 'file') {
           const isActive = openFile?.path === entry.path;
+          const relPath = effectiveDir && entry.path.startsWith(effectiveDir + '/')
+            ? entry.path.slice(effectiveDir.length + 1)
+            : entry.name;
           return (
             <button key={entry.path} style={{ paddingLeft: pad }}
               onClick={() => openFileContent(entry.path)}
               onContextMenu={e => openContextMenu(e, entry)}
-              className={`w-full flex items-center gap-2 py-[3px] pr-3 text-[12px] rounded-sm transition-colors ${isActive ? 'bg-primary/15 text-foreground' : 'text-muted-foreground hover:text-foreground hover:bg-white/5'}`}>
+              draggable={!isRenaming}
+              onDragStart={(e) => {
+                e.dataTransfer.setData('application/x-chat-file-mention', relPath);
+                // text/plain fallback so other targets (or accidental drops outside) get a sensible value
+                e.dataTransfer.setData('text/plain', '@' + relPath);
+                e.dataTransfer.effectAllowed = 'copy';
+              }}
+              className={`w-full flex items-center gap-2 py-[3px] pr-3 text-[12px] rounded-sm transition-colors cursor-grab active:cursor-grabbing ${isActive ? 'bg-primary/15 text-foreground' : 'text-muted-foreground hover:text-foreground hover:bg-white/5'}`}>
               <FileIcon name={entry.name} />
               {isRenaming ? (
                 <input autoFocus value={renameValue} onChange={e => setRenameValue(e.target.value)}
@@ -1865,12 +3036,21 @@ export function ChatClient({
         const isOpen = expandedDirs.has(entry.path);
         const children = treeChildrenMap.get(entry.path) || [];
         const showCreate = creatingIn === entry.path;
+        const dirRelPath = effectiveDir && entry.path.startsWith(effectiveDir + '/')
+          ? entry.path.slice(effectiveDir.length + 1)
+          : entry.name;
         return (
           <div key={entry.path}>
             <button style={{ paddingLeft: pad }}
               onClick={() => toggleDir(entry.path)}
               onContextMenu={e => openContextMenu(e, entry)}
-              className="w-full flex items-center gap-1.5 py-[3px] pr-3 text-[12px] text-foreground/75 hover:text-foreground hover:bg-white/5 rounded-sm transition-colors">
+              draggable={!isRenaming}
+              onDragStart={(e) => {
+                e.dataTransfer.setData('application/x-chat-file-mention', dirRelPath);
+                e.dataTransfer.setData('text/plain', '@' + dirRelPath);
+                e.dataTransfer.effectAllowed = 'copy';
+              }}
+              className="w-full flex items-center gap-1.5 py-[3px] pr-3 text-[12px] text-foreground/75 hover:text-foreground hover:bg-white/5 rounded-sm transition-colors cursor-grab active:cursor-grabbing">
               {isOpen ? <ChevronDown className="h-3 w-3 shrink-0" /> : <ChevronRight className="h-3 w-3 shrink-0" />}
               {isOpen ? <FolderOpen className="h-3.5 w-3.5 text-amber-400 shrink-0" /> : <Folder className="h-3.5 w-3.5 text-amber-400/70 shrink-0" />}
               {isRenaming ? (
@@ -2044,34 +3224,152 @@ export function ChatClient({
 
       {/* ── File content panel (VS Code editor style) ── */}
       {openFile && (
-        <div className="shrink-0 flex flex-col border-r border-border/60" style={{ width: `${filePanelPct}%`, background: 'hsl(var(--card))' }}>
-          {/* Tab bar */}
-          <div className="shrink-0 flex items-center border-b border-border/60 bg-muted/20" style={{ minHeight: 36 }}>
-            <div className="flex items-center gap-2 px-4 py-1.5 border-r border-border/40 bg-card/60">
-              <FileIcon name={openFile.name} />
-              <span className="text-[12px] text-foreground/90 font-medium">{openFile.name}</span>
-              {editedContent !== openFile.content && (
-                <span className="w-2 h-2 rounded-full bg-amber-400 ml-0.5" title="Unsaved changes" />
-              )}
-              <button onClick={() => setOpenFile(null)} className="ml-1 w-4 h-4 flex items-center justify-center rounded hover:bg-muted/60 text-muted-foreground/50 hover:text-foreground transition-colors">
-                <X className="h-2.5 w-2.5" />
-              </button>
+        <div
+          className={cn(
+            'shrink-0 flex flex-col border-r border-border/60 relative transition-colors',
+            isDragOverEditor && 'ring-2 ring-primary/40 ring-inset',
+          )}
+          style={{ width: `${filePanelPct}%`, background: 'hsl(var(--card))' }}
+          onDragOver={(e) => {
+            if (!e.dataTransfer.types.includes('application/x-chat-file-mention')) return;
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'copy';
+            setIsDragOverEditor(true);
+          }}
+          onDragLeave={(e) => {
+            const rt = e.relatedTarget as Node | null;
+            if (rt && e.currentTarget.contains(rt)) return;
+            setIsDragOverEditor(false);
+          }}
+          onDrop={(e) => {
+            setIsDragOverEditor(false);
+            const relPath = e.dataTransfer.getData('application/x-chat-file-mention');
+            if (!relPath || !effectiveDir) return;
+            e.preventDefault();
+            openFileContent(`${effectiveDir}/${relPath}`);
+          }}
+        >
+          {/* Tab bar — multi-file, VS Code style */}
+          <div className="shrink-0 flex items-stretch border-b border-border/60 bg-muted/20" style={{ minHeight: 36 }}>
+            {/* Tab strip — horizontally scrollable */}
+            <div
+              className="flex items-stretch overflow-x-auto flex-1 min-w-0 relative"
+              onDragOver={(e) => {
+                if (!e.dataTransfer.types.includes('application/x-editor-tab-reorder')) return;
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'move';
+              }}
+              onDrop={(e) => {
+                const fromPath = e.dataTransfer.getData('application/x-editor-tab-reorder');
+                if (!fromPath || tabDragInsertIdx === null) return;
+                e.preventDefault();
+                reorderTabs(fromPath, tabDragInsertIdx);
+                setTabDragInsertIdx(null);
+              }}
+            >
+              {openTabs.map((tab, idx) => {
+                const isActive = tab.path === activeTabPath;
+                const tabBuf = editedBuffers.get(tab.path);
+                const isDirty = tabBuf !== undefined && tabBuf !== tab.content;
+                return (
+                  <div
+                    key={tab.path}
+                    onClick={() => { setActiveTabPath(tab.path); setMdPreview('edit'); }}
+                    onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); closeTab(tab.path); } }}
+                    draggable
+                    onDragStart={(e) => {
+                      e.dataTransfer.setData('application/x-editor-tab-reorder', tab.path);
+                      e.dataTransfer.effectAllowed = 'move';
+                    }}
+                    onDragOver={(e) => {
+                      if (!e.dataTransfer.types.includes('application/x-editor-tab-reorder')) return;
+                      e.preventDefault();
+                      e.dataTransfer.dropEffect = 'move';
+                      const rect = e.currentTarget.getBoundingClientRect();
+                      const isLeftHalf = e.clientX < rect.left + rect.width / 2;
+                      setTabDragInsertIdx(isLeftHalf ? idx : idx + 1);
+                    }}
+                    onDragLeave={(e) => {
+                      // Clear only when leaving the tab strip entirely (not when moving to a sibling)
+                      const rt = e.relatedTarget as Node | null;
+                      if (rt && e.currentTarget.parentElement?.contains(rt)) return;
+                      setTabDragInsertIdx(null);
+                    }}
+                    onDragEnd={() => setTabDragInsertIdx(null)}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      // Estimate menu height (~14 rows × 28px ≈ 392px). Flip up if it would
+                      // overflow the viewport bottom; clamp left so it doesn't run off-right.
+                      const estHeight = 410;
+                      const estWidth = 240;
+                      const viewportH = window.innerHeight;
+                      const viewportW = window.innerWidth;
+                      let y = e.clientY;
+                      if (y + estHeight > viewportH - 8) y = Math.max(8, viewportH - estHeight - 8);
+                      let x = e.clientX;
+                      if (x + estWidth > viewportW - 8) x = Math.max(8, viewportW - estWidth - 8);
+                      setTabContextMenu({ x, y, path: tab.path });
+                    }}
+                    className={cn(
+                      'group relative flex items-center gap-2 pl-3 pr-1.5 py-1.5 border-r border-border/40 cursor-pointer transition-colors shrink-0 max-w-[200px]',
+                      isActive
+                        ? 'bg-card/80 text-foreground/95'
+                        : 'text-muted-foreground/80 hover:bg-card/40 hover:text-foreground/90'
+                    )}
+                    title={tab.path}
+                  >
+                    {isActive && <span className="absolute top-0 left-0 right-0 h-[2px] bg-primary" />}
+                    {tabDragInsertIdx === idx && (
+                      <span className="absolute left-0 top-1 bottom-1 w-[2px] bg-primary rounded-full" />
+                    )}
+                    {tabDragInsertIdx === idx + 1 && idx === openTabs.length - 1 && (
+                      <span className="absolute right-0 top-1 bottom-1 w-[2px] bg-primary rounded-full" />
+                    )}
+                    <FileIcon name={tab.name} />
+                    <span className="text-[12px] font-medium truncate">{tab.name}</span>
+                    {isDirty && !isActive && (
+                      <span className="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0" title="Unsaved" />
+                    )}
+                    <button
+                      onClick={(e) => { e.stopPropagation(); closeTab(tab.path); }}
+                      className={cn(
+                        'ml-0.5 w-4 h-4 flex items-center justify-center rounded shrink-0 hover:bg-muted/60 text-muted-foreground/50 hover:text-foreground transition-colors',
+                        isActive ? 'opacity-100' : isDirty ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+                      )}
+                    >
+                      {isActive && isDirty ? (
+                        <span className="w-2 h-2 rounded-full bg-amber-400" />
+                      ) : (
+                        <X className="h-2.5 w-2.5" />
+                      )}
+                    </button>
+                  </div>
+                );
+              })}
             </div>
-            <div className="flex-1" />
             {!openFile.isBinary && !openFile.isPdf && !openFile.isImage && !openFile.tooLarge && (
               <div className="flex items-center gap-1 mr-2">
-                {/* MD preview toggles */}
-                {openFile.name.endsWith('.md') && (
-                  <div className="flex items-center border border-border/60 rounded overflow-hidden mr-1">
-                    {([['edit', <FileCode key="e" className="h-3 w-3" />, 'Edit'],
-                       ['preview', <Eye key="p" className="h-3 w-3" />, 'Preview']] as const).map(([mode, icon, label]) => (
-                      <button key={mode} onClick={() => setMdPreview(mode as 'edit' | 'preview')}
-                        title={label}
-                        className={`flex items-center justify-center px-2 py-1 transition-colors ${mdPreview === mode ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:text-foreground hover:bg-muted/40'}`}>
-                        {icon}
-                      </button>
-                    ))}
-                  </div>
+                {/* Back-to-edit toggle (only visible when in preview). "Open Preview" lives in the tab right-click menu. */}
+                {(openFile.name.endsWith('.md') || openFile.name.endsWith('.ipynb')) && mdPreview === 'preview' && (
+                  <button
+                    onClick={() => setMdPreview('edit')}
+                    title={openFile.name.endsWith('.ipynb') ? 'View raw JSON' : 'Back to editor'}
+                    className="flex items-center gap-1.5 px-2 py-1 rounded text-[11px] text-muted-foreground hover:text-foreground hover:bg-muted/40 transition-colors"
+                  >
+                    <FileCode className="h-3 w-3" />
+                    {openFile.name.endsWith('.ipynb') ? 'Raw' : 'Edit'}
+                  </button>
+                )}
+                {openFile.name.endsWith('.ipynb') && mdPreview === 'edit' && (
+                  <button
+                    onClick={() => setMdPreview('preview')}
+                    title="Preview notebook"
+                    className="flex items-center gap-1.5 px-2 py-1 rounded text-[11px] text-muted-foreground hover:text-foreground hover:bg-muted/40 transition-colors"
+                  >
+                    <FileCode className="h-3 w-3" />
+                    Preview
+                  </button>
                 )}
                 <button
                   onClick={saveFile}
@@ -2120,6 +3418,8 @@ export function ChatClient({
                 <File className="h-10 w-10 opacity-20" />
                 <p className="text-sm">File too large to preview · {formatBytes(openFile.size)}</p>
               </div>
+            ) : mdPreview === 'preview' && openFile.name.endsWith('.ipynb') ? (
+              <NotebookPreview content={editedContent} onChange={setEditedContent} />
             ) : mdPreview === 'preview' ? (
               <MdContent content={editedContent} />
             ) : (
@@ -2130,10 +3430,76 @@ export function ChatClient({
                 onChange={v => setEditedContent(v ?? '')}
                 theme="vs-dark"
                 onMount={(editor, monaco) => {
+                  monacoEditorRef.current = editor as unknown as { getAction?: (id: string) => { run: () => void } | null };
                   editor.addCommand(
                     monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS,
                     () => saveFile(),
                   );
+                  // Cmd/Ctrl+W → close the active tab. Monaco normally consumes this
+                  // before our window listener can; registering it as a Monaco command
+                  // ensures it fires even when editor focus is the obstacle.
+                  editor.addCommand(
+                    monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyW,
+                    () => closeActiveTabRef.current(),
+                  );
+
+                  // Selection change → show the "Add to Chat" floating pill
+                  editor.onDidChangeCursorSelection(() => {
+                    const selection = editor.getSelection();
+                    if (!selection || selection.isEmpty()) {
+                      setSelectionPopover(null);
+                      return;
+                    }
+                    const model = editor.getModel();
+                    if (!model) return;
+                    const text = model.getValueInRange(selection);
+                    if (!text.trim()) {
+                      setSelectionPopover(null);
+                      return;
+                    }
+                    const endPos = selection.getEndPosition();
+                    const visiblePos = editor.getScrolledVisiblePosition(endPos);
+                    if (!visiblePos) return;
+                    const editorEl = editor.getDomNode();
+                    if (!editorEl) return;
+                    const rect = editorEl.getBoundingClientRect();
+                    const pillHeight = 32;
+                    const margin = 8;
+                    // Try BELOW selection end; flip ABOVE start if it would overflow viewport bottom
+                    const lineHeight = 18;
+                    let top = rect.top + visiblePos.top + lineHeight + margin;
+                    if (top + pillHeight > window.innerHeight - 12) {
+                      const startPos = selection.getStartPosition();
+                      const startVisible = editor.getScrolledVisiblePosition(startPos);
+                      if (startVisible) top = rect.top + startVisible.top - pillHeight - margin;
+                    }
+                    let left = rect.left + visiblePos.left + margin;
+                    // Keep pill in the editor's horizontal bounds (with a 200px-ish budget)
+                    left = Math.min(left, rect.right - 160);
+                    left = Math.max(left, rect.left + 8);
+
+                    // openFile is in scope here; safe to compute relPath
+                    const relPath = openFile && effectiveDir && openFile.path.startsWith(effectiveDir + '/')
+                      ? openFile.path.slice(effectiveDir.length + 1)
+                      : openFile?.name ?? '';
+
+                    setSelectionPopover({
+                      top,
+                      left,
+                      text,
+                      startLine: selection.startLineNumber,
+                      endLine: selection.endLineNumber,
+                      relPath,
+                      lang: openFile?.language || '',
+                    });
+                  });
+
+                  // Hide pill while scrolling; user can re-select to bring it back
+                  editor.onDidScrollChange(() => setSelectionPopover(null));
+                  editor.onDidBlurEditorWidget(() => {
+                    // Tiny delay so a click on the pill itself still fires before this clears state
+                    setTimeout(() => setSelectionPopover(null), 150);
+                  });
                 }}
                 options={{
                   fontSize: 13,
@@ -2379,7 +3745,15 @@ export function ChatClient({
                   </button>
                 </div>
               )}
-              {messages.map(msg => <MessageBubble key={msg.id} msg={msg} onRetry={retryWithPermission} />)}
+              {messages.map(msg => (
+                <MessageBubble
+                  key={msg.id}
+                  msg={msg}
+                  onRetry={retryWithPermission}
+                  onAnswerQuestion={answerInteractiveQuestion}
+                  isAnswered={msg.toolUseId ? answeredToolUseIds.has(msg.toolUseId) : false}
+                />
+              ))}
               <div ref={threadEndRef} />
             </div>
           )}
@@ -2419,25 +3793,51 @@ export function ChatClient({
             </div>
           )}
 
-          <div className="relative px-4 pt-3 pb-1">
+          <div className="relative px-4 pt-1.5 pb-1">
             {/* Command palette */}
-            {showCmdPalette && filteredCmds.length > 0 && (
-              <div className="absolute bottom-full left-4 right-4 mb-2 bg-card border border-border rounded-xl shadow-2xl overflow-hidden z-50">
-                <div className="px-3 py-1.5 text-[10px] text-muted-foreground border-b border-border/50 font-medium uppercase tracking-wide">
-                  Commands
+            {showCmdPalette && filteredCmds.length > 0 && (() => {
+              // Split into sections: dashboard built-in vs user-custom (from ~/.claude/commands/*.md
+              // discovered via the CLI's system.init event)
+              const builtinNames = new Set(SLASH_COMMANDS.map(c => c.name));
+              const builtin = filteredCmds.filter(c => builtinNames.has(c.name));
+              const custom  = filteredCmds.filter(c => !builtinNames.has(c.name));
+              const sections: Array<{ label: string; items: SlashCommand[] }> = [];
+              if (builtin.length) sections.push({ label: 'Built-in', items: builtin });
+              if (custom.length)  sections.push({ label: 'Custom', items: custom });
+
+              // Map a (section, item-in-section) pair back to the flat selected index used by keyboard nav
+              let flatIdx = -1;
+              return (
+                <div className="absolute bottom-full left-4 right-4 mb-2 bg-card border border-border rounded-xl shadow-2xl overflow-hidden z-50 max-h-[400px] overflow-y-auto">
+                  {sections.map(section => (
+                    <div key={section.label}>
+                      <div className="px-3 py-1.5 text-[10px] text-muted-foreground border-b border-border/50 font-medium uppercase tracking-wide sticky top-0 bg-card">
+                        {section.label}
+                        {section.label === 'Custom' && (
+                          <span className="ml-2 text-[9px] text-muted-foreground/60 normal-case font-normal">
+                            from ~/.claude/commands/
+                          </span>
+                        )}
+                      </div>
+                      {section.items.map(cmd => {
+                        flatIdx += 1;
+                        const i = flatIdx;
+                        return (
+                          <button key={cmd.name}
+                            className={`w-full flex items-center gap-3 px-3 py-2 text-left transition-colors ${i === cmdSelectedIdx ? 'bg-muted/60' : 'hover:bg-muted/40'}`}
+                            onClick={() => executeSlashCommand(cmd.name)}
+                          >
+                            <span className="text-xs font-mono font-semibold text-primary flex-shrink-0 w-24">/{cmd.name}</span>
+                            <span className="text-xs text-muted-foreground truncate flex-1">{cmd.desc || '—'}</span>
+                            {cmd.local && <span className="text-[9px] text-muted-foreground/50 flex-shrink-0">local</span>}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ))}
                 </div>
-                {filteredCmds.map((cmd, i) => (
-                  <button key={cmd.name}
-                    className={`w-full flex items-center gap-3 px-3 py-2 text-left transition-colors ${i === cmdSelectedIdx ? 'bg-muted/60' : 'hover:bg-muted/40'}`}
-                    onClick={() => executeSlashCommand(cmd.name)}
-                  >
-                    <span className="text-xs font-mono font-semibold text-primary flex-shrink-0 w-24">/{cmd.name}</span>
-                    <span className="text-xs text-muted-foreground truncate">{cmd.desc}</span>
-                    {cmd.local && <span className="ml-auto text-[9px] text-muted-foreground/50 flex-shrink-0">local</span>}
-                  </button>
-                ))}
-              </div>
-            )}
+              );
+            })()}
 
             {/* File picker */}
             {showFilePicker && (filePickerDirs.length > 0 || filePickerFiles.length > 0) && (
@@ -2468,73 +3868,315 @@ export function ChatClient({
               </div>
             )}
 
-            <textarea ref={textareaRef} value={prompt} onChange={handleTextareaChange} onKeyDown={handleKeyDown}
-              onPaste={handlePaste}
-              onDrop={handleDrop}
-              onDragOver={e => e.preventDefault()}
-              disabled={isStreaming || !effectiveDir}
-              placeholder={effectiveDir
-                ? 'Message… (/ for commands, @ to reference a file, paste or drag images)'
-                : 'Select a directory first…'}
-              rows={1}
-              className="w-full resize-none rounded-xl px-4 py-3 text-sm bg-muted/40 border border-border focus:outline-none focus:border-primary/40 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-              style={{ maxHeight: '200px', overflow: 'auto' }} />
-          </div>
+            {/* Live status line — VS Code-extension style. Replaces itself as
+                stream events arrive ("Thinking…" → "Reading file.tsx…" →
+                "Running command…" → cleared on result). */}
+            {streamingStatus && (
+              <div className="px-4 pb-1 -mt-1 flex items-center gap-2 text-[11px] text-muted-foreground animate-pulse">
+                <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400/70" />
+                <span className="font-mono truncate">{streamingStatus}</span>
+              </div>
+            )}
 
-          {/* Bottom toolbar */}
-          <div className="flex items-center justify-between px-4 pb-3">
-            {/* Left: Attach + Commands */}
-            <div className="flex items-center gap-1">
-              <button
-                onClick={() => imageInputRef.current?.click()}
-                disabled={!effectiveDir || isStreaming || attachedImages.length >= 4}
-                title="Attach image (or paste/drag)"
-                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs text-muted-foreground hover:text-foreground hover:bg-muted/60 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-              >
-                <Paperclip className="h-3.5 w-3.5" />
-                <span>Attach</span>
-              </button>
-              <button
-                onClick={() => {
-                  if (showCmdPalette) {
-                    setShowCmdPalette(false);
-                    if (prompt === '/') setPrompt('');
-                  } else {
-                    setPrompt('/');
-                    setShowCmdPalette(true);
-                    setCmdQuery('');
-                    setCmdSelectedIdx(0);
-                    setTimeout(() => textareaRef.current?.focus(), 0);
-                  }
-                }}
-                disabled={!effectiveDir || isStreaming}
-                title="Slash commands"
-                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs disabled:opacity-40 disabled:cursor-not-allowed transition-colors ${showCmdPalette ? 'text-primary bg-primary/10' : 'text-muted-foreground hover:text-foreground hover:bg-muted/60'}`}
-              >
-                <Slash className="h-3.5 w-3.5" />
-                <span>Commands</span>
-              </button>
-            </div>
+            {/* ─── Unified composer card: textarea + streaming bar + toolbar ─── */}
+            {(() => {
+              // Context-window usage = the size of the LATEST prompt sent to the model
+              // (input + cache_creation + cache_read on the most recent assistant turn).
+              // NOT the cumulative session total — that grows unboundedly across turns
+              // even when each turn's prompt fits comfortably in the context window.
+              const lastAssistant = [...messages].reverse().find(
+                m => m.role === 'assistant' && (m.inputTokens || m.cacheCreationTokens || m.cacheReadTokens)
+              );
+              const tokensUsed = lastAssistant
+                ? (lastAssistant.inputTokens ?? 0)
+                  + (lastAssistant.cacheCreationTokens ?? 0)
+                  + (lastAssistant.cacheReadTokens ?? 0)
+                : 0;
+              const currentModelLabel = MODEL_OPTIONS.find(m => m.value === selectedModel)?.label ?? 'Default';
+              const insertAtMention = () => {
+                const next = prompt + (prompt && !prompt.endsWith(' ') ? ' @' : '@');
+                setPrompt(next);
+                setTimeout(() => textareaRef.current?.focus(), 0);
+              };
 
-            {/* Right: Stop / Send */}
-            <div className="flex items-center gap-2">
-              {isStreaming ? (
-                <button onClick={stopStreaming} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 transition-colors">
-                  <Square className="h-3.5 w-3.5" />Stop
-                </button>
-              ) : (
-                <button onClick={() => sendMessage(prompt)}
-                  disabled={(!prompt.trim() && attachedImages.length === 0) || !effectiveDir}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
-                  <Send className="h-3.5 w-3.5" />Send
-                </button>
-              )}
-            </div>
+              return (
+                <div className={cn(
+                  'rounded-xl border bg-background/40 transition-colors overflow-hidden',
+                  isDragOverComposer
+                    ? 'border-primary/60 bg-primary/5 ring-2 ring-primary/20'
+                    : 'focus-within:border-primary/40 border-border',
+                )}>
+                  <textarea ref={textareaRef} value={prompt} onChange={handleTextareaChange} onKeyDown={handleKeyDown}
+                    onPaste={handlePaste}
+                    onDrop={(e) => { setIsDragOverComposer(false); handleDrop(e); }}
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      if (e.dataTransfer.types.includes('application/x-chat-file-mention')) {
+                        e.dataTransfer.dropEffect = 'copy';
+                      }
+                    }}
+                    onDragEnter={(e) => {
+                      if (e.dataTransfer.types.includes('application/x-chat-file-mention')) {
+                        setIsDragOverComposer(true);
+                      }
+                    }}
+                    onDragLeave={() => setIsDragOverComposer(false)}
+                    disabled={isStreaming || !effectiveDir}
+                    placeholder={effectiveDir
+                      ? 'Message… (/ for commands, @ to reference a file, paste or drag images)'
+                      : 'Select a directory first…'}
+                    rows={1}
+                    className="w-full resize-none px-3.5 pt-2 pb-1.5 text-sm bg-transparent border-0 focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed leading-snug"
+                    style={{ maxHeight: '200px', overflow: 'auto' }} />
+
+                  {/* Streaming gradient bar (replaces the divider while streaming) */}
+                  {isStreaming ? (
+                    <div className="h-0.5 bg-gradient-to-r from-blue-500 via-indigo-500 to-purple-500 animate-pulse" />
+                  ) : (
+                    <div className="h-px bg-border/40" />
+                  )}
+
+                  {/* Row 2 toolbar */}
+                  <div className="flex items-center justify-between gap-2 px-1.5 py-1">
+                    {/* Left cluster: Attach · Commands · @ Ref · Model pill */}
+                    <div className="flex items-center gap-0.5 min-w-0">
+                      <button
+                        onClick={() => imageInputRef.current?.click()}
+                        disabled={!effectiveDir || isStreaming || attachedImages.length >= 4}
+                        title="Attach image (or paste/drag)"
+                        className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs text-muted-foreground hover:text-foreground hover:bg-muted/60 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                      >
+                        <Paperclip className="h-3.5 w-3.5" />
+                        <span className="hidden sm:inline">Attach</span>
+                      </button>
+                      <button
+                        onClick={() => {
+                          if (showCmdPalette) {
+                            setShowCmdPalette(false);
+                            if (prompt === '/') setPrompt('');
+                          } else {
+                            setPrompt('/');
+                            setShowCmdPalette(true);
+                            setCmdQuery('');
+                            setCmdSelectedIdx(0);
+                            setTimeout(() => textareaRef.current?.focus(), 0);
+                          }
+                        }}
+                        disabled={!effectiveDir || isStreaming}
+                        title="Slash commands"
+                        className={cn(
+                          'flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs disabled:opacity-40 disabled:cursor-not-allowed transition-colors',
+                          showCmdPalette ? 'text-primary bg-primary/10' : 'text-muted-foreground hover:text-foreground hover:bg-muted/60'
+                        )}
+                      >
+                        <Slash className="h-3.5 w-3.5" />
+                        <span className="hidden sm:inline">Commands</span>
+                      </button>
+                      <button
+                        onClick={insertAtMention}
+                        disabled={!effectiveDir || isStreaming}
+                        title="Reference a file (@)"
+                        className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs text-muted-foreground hover:text-foreground hover:bg-muted/60 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                      >
+                        <AtSign className="h-3.5 w-3.5" />
+                        <span className="hidden md:inline">Reference</span>
+                      </button>
+
+                      {/* Model pill — dropdown is portaled (see bottom of file) */}
+                      <button
+                        ref={modelPickerBtnRef}
+                        onClick={() => {
+                          if (showModelPicker) {
+                            setShowModelPicker(false);
+                          } else {
+                            const rect = modelPickerBtnRef.current?.getBoundingClientRect();
+                            if (rect) setModelPickerRect(rect);
+                            setShowModelPicker(true);
+                          }
+                        }}
+                        disabled={isStreaming}
+                        title="Change model"
+                        className={cn(
+                          'flex items-center gap-1 px-2.5 py-1.5 ml-1 rounded-lg text-xs transition-colors',
+                          'bg-muted/40 hover:bg-muted/70 text-foreground/80',
+                          'disabled:opacity-40 disabled:cursor-not-allowed',
+                          showModelPicker && 'bg-muted/70 text-foreground'
+                        )}
+                      >
+                        <span className="font-medium">{currentModelLabel}</span>
+                        <ChevronDown className={cn('h-3 w-3 transition-transform', showModelPicker && 'rotate-180')} />
+                      </button>
+                    </div>
+
+                    {/* Right cluster: context ring (click → /compact) · ⌘↩ hint · Send/Stop */}
+                    <div className="flex items-center gap-2 shrink-0">
+                      {tokensUsed > 0 && (() => {
+                        const usedPct = Math.min(100, (tokensUsed / CONTEXT_WINDOW) * 100);
+                        const remainingPct = Math.max(0, Math.round(100 - usedPct));
+                        const usedPctRounded = Math.round(usedPct);
+                        // Ring color carries the state. No inline label — keeps the icon
+                        // consistent with every other toolbar button (hover-only bg, fixed footprint).
+                        const ringStroke =
+                          usedPct >= 80 ? '#F87171' :
+                          usedPct >= 50 ? '#FBBF24' :
+                          '#A5B4FC';
+                        const radius = 7;
+                        const circumference = 2 * Math.PI * radius;
+                        const offset = circumference * (1 - usedPct / 100);
+                        return (
+                          <Tooltip delayDuration={150}>
+                            <TooltipTrigger asChild>
+                              <button
+                                onClick={() => executeSlashCommand('compact')}
+                                disabled={isStreaming}
+                                aria-label={`${usedPctRounded}% of context used. Click to compact.`}
+                                className="flex items-center justify-center w-7 h-7 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                              >
+                                <svg width="18" height="18" viewBox="0 0 18 18" className="shrink-0">
+                                  <circle cx="9" cy="9" r={radius} fill="none"
+                                    stroke="hsl(var(--border))" strokeWidth="2" strokeOpacity="0.6" />
+                                  <circle cx="9" cy="9" r={radius} fill="none"
+                                    stroke={ringStroke} strokeWidth="2" strokeLinecap="round"
+                                    strokeDasharray={circumference}
+                                    strokeDashoffset={offset}
+                                    transform="rotate(-90 9 9)"
+                                    style={{ transition: 'stroke-dashoffset 300ms ease-out, stroke 200ms' }} />
+                                </svg>
+                              </button>
+                            </TooltipTrigger>
+                            <TooltipContent side="top" className="max-w-[240px] leading-snug">
+                              <p className="font-medium">
+                                {usedPctRounded}% of context used · {remainingPct}% until auto-compact
+                              </p>
+                              <p className="text-[10px] opacity-70 mt-1 font-mono">
+                                {formatTokens(tokensUsed)} / {formatTokens(CONTEXT_WINDOW)} on the latest turn
+                              </p>
+                              <p className="text-[10px] opacity-70 mt-0.5">
+                                Click to compact now.
+                              </p>
+                            </TooltipContent>
+                          </Tooltip>
+                        );
+                      })()}
+                      {!isStreaming && (
+                        <kbd className="hidden lg:inline text-[10px] text-muted-foreground/60 font-mono bg-muted/40 px-1.5 py-0.5 rounded border border-border/40">
+                          ⌘↩
+                        </kbd>
+                      )}
+                      {isStreaming ? (
+                        <button onClick={stopStreaming} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 transition-colors">
+                          <Square className="h-3.5 w-3.5" />Stop
+                        </button>
+                      ) : (
+                        <button onClick={() => sendMessage(prompt)}
+                          disabled={(!prompt.trim() && attachedImages.length === 0) || !effectiveDir}
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+                          <Send className="h-3.5 w-3.5" />Send
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         </div>
       </div>
       </div>{/* end splitContainerRef */}
     </div>
+
+    {/* ── Model picker portal (escapes composer's overflow-hidden) ── */}
+    {showModelPicker && modelPickerRect && typeof window !== 'undefined' && createPortal(
+      <div
+        ref={modelPickerPanelRef}
+        className="fixed z-[300] rounded-xl border border-border bg-card shadow-2xl overflow-hidden min-w-[220px]"
+        style={{
+          left: modelPickerRect.left,
+          // anchor to bottom of viewport above the trigger, with 8px gap
+          bottom: window.innerHeight - modelPickerRect.top + 8,
+        }}
+      >
+        <div className="px-3 py-1.5 text-[10px] text-muted-foreground border-b border-border/50 font-medium uppercase tracking-wide">
+          Model
+        </div>
+        {MODEL_OPTIONS.map(opt => (
+          <button
+            key={opt.value || 'default'}
+            onClick={() => { setSelectedModel(opt.value); setShowModelPicker(false); }}
+            className={cn(
+              'w-full text-left px-3 py-2 transition-colors',
+              selectedModel === opt.value ? 'bg-primary/10' : 'hover:bg-muted/40'
+            )}
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium">{opt.label}</span>
+              {selectedModel === opt.value && <span className="text-[10px] text-primary">✓</span>}
+            </div>
+            <p className="text-[10px] text-muted-foreground/70 mt-0.5">{opt.hint}</p>
+          </button>
+        ))}
+      </div>,
+      document.body
+    )}
+
+    {/* ── "Add to Chat" pill on Monaco text selection (portaled) ── */}
+    {selectionPopover && typeof window !== 'undefined' && createPortal(
+      <button
+        onClick={addSelectionToChat}
+        onMouseDown={(e) => e.preventDefault()}  // don't steal editor focus → don't trigger blur-clear before click fires
+        className="fixed z-[300] flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-medium shadow-lg hover:bg-primary/90 transition-all border border-primary/30"
+        style={{
+          top: selectionPopover.top,
+          left: selectionPopover.left,
+          animation: 'fadeInUp 120ms ease-out',
+        }}
+      >
+        <Plus className="h-3.5 w-3.5" />
+        Add to Chat
+        <span className="text-[10px] opacity-70 ml-1 font-mono">
+          {selectionPopover.startLine === selectionPopover.endLine
+            ? `L${selectionPopover.startLine}`
+            : `L${selectionPopover.startLine}-${selectionPopover.endLine}`}
+        </span>
+      </button>,
+      document.body
+    )}
+
+    {/* ── Tab context menu (right-click on editor tab) — portaled to escape stacking contexts ── */}
+    <TabContextMenuPortal
+      ctx={tabContextMenu}
+      openTabs={openTabs}
+      editedBuffers={editedBuffers}
+      effectiveDir={effectiveDir}
+      onClose={() => setTabContextMenu(null)}
+      onCloseTab={closeTab}
+      onCloseOthers={closeOtherTabs}
+      onCloseRight={closeTabsToRight}
+      onCloseSaved={closeSavedTabs}
+      onCloseAll={closeAllTabs}
+      onMentionFile={insertFileMention}
+      onMoveTab={moveTab}
+      onRevealInTree={(path: string) => {
+        if (!effectiveDir || !path.startsWith(effectiveDir + '/')) return;
+        const parts = path.slice(effectiveDir.length + 1).split('/');
+        let acc = effectiveDir;
+        const toExpand: string[] = [];
+        for (let i = 0; i < parts.length - 1; i++) {
+          acc = `${acc}/${parts[i]}`;
+          toExpand.push(acc);
+        }
+        if (toExpand.length) {
+          setExpandedDirs(prev => {
+            const next = new Set(prev);
+            for (const d of toExpand) next.add(d);
+            return next;
+          });
+        }
+      }}
+      onOpenPreview={openPreviewMode}
+      onFormat={formatFileContent}
+    />
+
 
     {/* ── Right-click context menu ── */}
     {contextMenu && (

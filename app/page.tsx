@@ -52,6 +52,29 @@ interface InsightThresholds {
   agent_max_cache_ratio: number;
   edit_retries_min_sessions: number;
   edit_retries_min_per_session: number;
+  long_tool_min_calls: number;
+  long_tool_min_duration_ms: number;
+  cost_spike_ratio: number;
+  cost_spike_min_baseline: number;
+  opus_verbose_min_turns: number;
+  opus_verbose_ratio: number;
+  read_thrash_min_per_session: number;
+  read_thrash_min_sessions: number;
+  cache_write_no_read_min_sessions: number;
+  retry_loop_min_sessions: number;
+  retry_loop_min_consecutive: number;
+  no_caching_min_sessions: number;
+  no_caching_min_input: number;
+  subagent_explosion_min_sessions: number;
+  subagent_explosion_min_calls: number;
+  volume_spike_ratio: number;
+  volume_spike_min_baseline: number;
+  high_error_min_sessions: number;
+  high_error_min_tool_calls: number;
+  high_error_rate_threshold: number;
+  opus_research_min_sessions: number;
+  opus_research_min_tools: number;
+  opus_small_min_turns: number;
 }
 interface DigestData {
   week_cost: number;
@@ -78,13 +101,15 @@ const SCOPE_LABELS: Record<string, { full: string; short: string; title: string 
   '24h': { full: 'last 24 hours', short: '24h', title: 'Last 24h'       },
   '7d':  { full: 'last 7 days',   short: '7d',  title: 'Last 7 days'    },
   '30d': { full: 'last 30 days',  short: '30d', title: 'Last 30 days'   },
+  'all': { full: 'all time',      short: 'all', title: 'All time'       },
 };
 
 async function getData(scopeKey: string) {
   const base = process.env.NEXT_PUBLIC_APP_URL || `http://localhost:${process.env.PORT || 3000}`;
-  const windowMs = SCOPE_MS[scopeKey] ?? SCOPE_MS['24h'];
-  const start = toSqliteTimestamp(new Date(Date.now() - windowMs));
-  const tokensUrl = `${base}/api/tokens?start=${encodeURIComponent(start)}`;
+  const windowMs = SCOPE_MS[scopeKey];
+  const tokensUrl = windowMs
+    ? `${base}/api/tokens?start=${encodeURIComponent(toSqliteTimestamp(new Date(Date.now() - windowMs)))}`
+    : `${base}/api/tokens`;
   const [stats, sessionsRes, tokens, heatmap, insights, settings] = await Promise.all([
     fetch(`${base}/api/stats?scope=${scopeKey}`, { cache: 'no-store' }).then((r) => r.json()).catch(() => ({})),
     fetch(`${base}/api/sessions?limit=10`, { cache: 'no-store' }).then((r) => r.json()).catch(() => ({ sessions: [] })),
@@ -104,7 +129,7 @@ export default async function DashboardPage({
   searchParams: Promise<SearchParams>;
 }) {
   const sp = await searchParams;
-  const scopeKey = (sp.scope && SCOPE_MS[sp.scope]) ? sp.scope : '24h';
+  const scopeKey = (sp.scope && SCOPE_LABELS[sp.scope]) ? sp.scope : '24h';
   const scopeLabel = SCOPE_LABELS[scopeKey].full;
   const scopeShort = SCOPE_LABELS[scopeKey].short;
   const scopeTitle = SCOPE_LABELS[scopeKey].title;
@@ -115,6 +140,7 @@ export default async function DashboardPage({
       today?: TodayStats;
       yesterday?: YesterdayStats;
       week_sparkline?: WeekSparklinePoint[];
+      prev_week_total?: { events: number; errors: number; tool_calls: number };
     };
     sessions: Session[];
     tokens: { totals: TokenTotals; by_model: ModelStats[] };
@@ -195,7 +221,7 @@ export default async function DashboardPage({
               {today.cost > 0 ? ` · ${formatCost(today.cost)} spent` : ''}
               {today.errors > 0 ? ` · ${today.errors} error${today.errors !== 1 ? 's' : ''}` : ''}
             </h1>
-            <ScopePicker current={scopeKey} />
+            <ScopePicker current={scopeKey} options={['1h', '5h', '24h', '7d', '30d', 'all']} />
           </div>
           <p className="text-xs text-muted-foreground">
             Showing {scopeLabel} · all numbers below obey this scope unless self-labeled
@@ -305,15 +331,6 @@ export default async function DashboardPage({
           </div>
         )}
 
-        {/* Recommendations + inline threshold tuning */}
-        {thresholds && thresholdDefaults && (
-          <RecommendationsSection
-            insights={insightsList}
-            thresholds={thresholds}
-            defaults={thresholdDefaults}
-          />
-        )}
-
         {/* Token summary — scoped to the page's selected window */}
         {totals && totals.total_tokens > 0 && (
           <Link href="/tokens" className="block group">
@@ -345,7 +362,7 @@ export default async function DashboardPage({
                 {[
                   { label: 'Input',       tokens: totals.input_tokens,        cost: calcCost(totals.input_tokens, 0, 0, 0, null),        rate: '$3/M',    color: 'text-blue-400' },
                   { label: 'Output',      tokens: totals.output_tokens,       cost: calcCost(0, totals.output_tokens, 0, 0, null),       rate: '$15/M',   color: 'text-rose-400' },
-                  { label: 'Cache Write', tokens: totals.cache_write_tokens,  cost: calcCost(0, 0, totals.cache_write_tokens, 0, null),  rate: '$3.75/M', color: 'text-amber-400' },
+                  { label: 'Cache Write', tokens: totals.cache_write_tokens,  cost: calcCost(0, 0, totals.cache_write_tokens, 0, null),  rate: '$6/M', color: 'text-amber-400' },
                   { label: 'Cache Read',  tokens: totals.cache_read_tokens,   cost: calcCost(0, 0, 0, totals.cache_read_tokens, null),   rate: '$0.30/M', color: 'text-emerald-400' },
                 ].map(({ label, tokens, cost, rate, color }) => (
                   <div key={label}>
@@ -411,15 +428,21 @@ export default async function DashboardPage({
           );
         })()}
 
-        {/* Hero chart — Activity Last 7 Days */}
+        {/* Hero chart — title + delta live inside the chart component now */}
         <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium">Activity — Last 7 Days</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <HeroChart data={weekSparkline} />
+          <CardContent className="pt-5">
+            <HeroChart data={weekSparkline} prevWeekTotal={stats?.prev_week_total} />
           </CardContent>
         </Card>
+
+        {/* Recommendations — between hero chart and heatmap so insights surface alongside the activity picture */}
+        {thresholds && thresholdDefaults && (
+          <RecommendationsSection
+            insights={insightsList}
+            thresholds={thresholds}
+            defaults={thresholdDefaults}
+          />
+        )}
 
         {/* Activity heatmap */}
         <Card>

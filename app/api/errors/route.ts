@@ -8,10 +8,18 @@ export async function GET(request: NextRequest) {
   const page = Math.max(1, parseInt(searchParams.get('page') || '1'));
   const limit = Math.min(100, parseInt(searchParams.get('limit') || '50'));
   const offset = (page - 1) * limit;
+  const project = searchParams.get('project') ?? null;
+
+  // Optional project filter — uses a JOIN + WHERE clause when project is specified
+  const projectJoin = project ? `JOIN cc_sessions s ON e.session_id = s.session_id` : '';
+  const projectWhere = project ? `AND s.project_dir = ?` : '';
 
   try {
     if (grouped) {
       // Tool errors — from cc_events.is_error
+      const groupedParams: unknown[] = project
+        ? [project, limit, offset]
+        : [limit, offset];
       const [toolGroups] = await pool.query<RowDataPacket[]>(
         `SELECT
           COALESCE(e.error_message, e.content, 'Unknown error') AS message,
@@ -20,19 +28,23 @@ export async function GET(request: NextRequest) {
           COUNT(DISTINCT e.session_id) AS session_count,
           MAX(e.timestamp) AS last_seen
         FROM cc_events e
-        WHERE e.is_error = TRUE
+        ${projectJoin}
+        WHERE e.is_error = TRUE ${projectWhere}
         GROUP BY message, e.tool_name
         ORDER BY last_seen DESC
         LIMIT ? OFFSET ?`,
-        [limit, offset]
+        groupedParams
       );
 
+      const totalParams: unknown[] = project ? [project] : [];
       const [[{ tool_total }]] = await pool.query<RowDataPacket[]>(
         `SELECT COUNT(*) as tool_total FROM (
-          SELECT 1 FROM cc_events
-          WHERE is_error = TRUE
-          GROUP BY COALESCE(error_message, content, 'Unknown error'), tool_name
-        ) g`
+          SELECT 1 FROM cc_events e
+          ${projectJoin}
+          WHERE e.is_error = TRUE ${projectWhere}
+          GROUP BY COALESCE(e.error_message, e.content, 'Unknown error'), e.tool_name
+        ) g`,
+        totalParams
       );
 
       // API errors — from cc_transcript_records where subtype='api_error'.
@@ -79,6 +91,8 @@ export async function GET(request: NextRequest) {
       });
     }
 
+    const ungroupedWhere = project ? `AND s.project_dir = ?` : '';
+    const ungroupedParams: unknown[] = project ? [project, limit, offset] : [limit, offset];
     const [errors] = await pool.query<RowDataPacket[]>(
       `SELECT
         e.id, e.session_id, e.timestamp, e.event_type,
@@ -87,14 +101,18 @@ export async function GET(request: NextRequest) {
         s.project_dir
       FROM cc_events e
       JOIN cc_sessions s ON e.session_id = s.session_id
-      WHERE e.is_error = TRUE
+      WHERE e.is_error = TRUE ${ungroupedWhere}
       ORDER BY e.timestamp DESC
       LIMIT ? OFFSET ?`,
-      [limit, offset]
+      ungroupedParams
     );
 
+    const totalCountParams: unknown[] = project ? [project] : [];
     const [[{ total }]] = await pool.query<RowDataPacket[]>(
-      'SELECT COUNT(*) as total FROM cc_events WHERE is_error = TRUE'
+      project
+        ? `SELECT COUNT(*) as total FROM cc_events e JOIN cc_sessions s ON e.session_id = s.session_id WHERE e.is_error = TRUE AND s.project_dir = ?`
+        : `SELECT COUNT(*) as total FROM cc_events WHERE is_error = TRUE`,
+      totalCountParams
     );
 
     return NextResponse.json({

@@ -25,6 +25,7 @@ export async function GET(
     const [rows] = await pool.query<RowDataPacket[]>(
       `SELECT
         id, session_id, timestamp, event_type, agent, role,
+        COALESCE(NULLIF(json_extract(raw_payload, '$.agent_type'), ''), agent) AS agent_type,
         content, tool_name, tool_input, tool_output,
         is_error, error_message, transcript_path,
         input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, total_tokens,

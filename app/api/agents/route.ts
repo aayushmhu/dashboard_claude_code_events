@@ -17,7 +17,7 @@ export async function GET() {
 
       SELECT
         agent,
-        json_extract(raw_payload, '$.agent_type') AS agent_type,
+        COALESCE(NULLIF(json_extract(raw_payload, '$.agent_type'), ''), agent) AS agent_type,
         COUNT(*) AS event_count
       FROM cc_events
       WHERE agent IS NOT NULL AND agent != 'main'

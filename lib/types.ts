@@ -36,6 +36,7 @@ export interface Event {
     | 'PostToolUse'
     | 'Notification';
   agent: string;
+  agent_type: string | null;
   role: 'user' | 'assistant' | 'tool' | 'system' | null;
   content: string | null;
   tool_name: string | null;

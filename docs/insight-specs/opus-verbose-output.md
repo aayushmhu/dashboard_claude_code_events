@@ -13,13 +13,13 @@
 ## Edge cases addressed
 - **Model identity:** Filters on `model LIKE '%opus%'` only. Sonnet/Haiku output is much cheaper and verbose output there is less of a concern.
 - **Input tokens excluded from cache_read:** "Input" in this rule means `input_tokens`, the freshly-supplied prompt. We deliberately don't include `cache_read_tokens` in the denominator — the rule is about whether Opus is producing too much output **relative to the new prompt content**, not the cached history.
-- **Saving estimate:** If output were halved (e.g., via "be concise" system prompt), savings ≈ `0.5 × verbose_output_tokens × $75/M`. Stated assumption in `savingSubtext`.
+- **Saving estimate:** If output were halved (e.g., via "be concise" system prompt), savings ≈ `0.5 × verbose_output_tokens × $25/M`. Stated assumption in `savingSubtext`.
 - **Time window:** Last 30 days.
 
 ## Validation (dry-run against real DB, 2026-05-13)
 - [x] **Pre-fix bug caught:** Initial validation showed 356 "verbose" turns with `avg_ratio = 390:1`. That's the normal cached-conversation pattern (tiny fresh prompt + standard response), NOT verbosity. **Without the `input>500` / `output>2000` gates, this rule would fire on every active user as a false positive.**
 - [x] **After fix:** 1 turn matches (ratio 50:1 with substantive input). Below the 10-turn threshold → rule correctly stays silent.
-- [x] **Saving estimate:** Bounded by `0.5 × output × $75/M` (Opus output rate). Stated assumption surfaced in card subtext.
+- [x] **Saving estimate:** Bounded by `0.5 × output × $25/M` (Opus output rate). Stated assumption surfaced in card subtext.
 
 ## What we claim vs what we don't
 - **Claim:** Opus turn output is N× larger than input on `X` turns. If average were halved, ~$Y saved.

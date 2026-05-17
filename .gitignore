@@ -37,6 +37,7 @@ hook-debug.log
 
 # sensitive hook files
 settings.json.bak
+.claude/settings.local.json
 
 # typescript
 *.tsbuildinfo

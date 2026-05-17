@@ -964,6 +964,84 @@ function PermissionDenialCard({
     }
   }
 
+  // ── Agent-specific rendering ──────────────────────────────────────────────
+  const isAgentTool = d?.tool_name === 'Agent';
+  if (isAgentTool) {
+    const subagentType = (d?.tool_input?.subagent_type as string) || 'Agent';
+    const description = d?.tool_input?.description as string | undefined;
+    const agentColor = getAgentColor(subagentType);
+    const displayName = formatAgentName(subagentType);
+
+    return (
+      <div className="rounded-lg p-3 text-sm flex items-start gap-2"
+        style={{ background: agentColor.bg, border: `1px solid ${agentColor.border}` }}>
+        <Bot className="h-4 w-4 mt-0.5 shrink-0" style={{ color: agentColor.text }} />
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <p className="text-xs font-medium" style={{ color: agentColor.text }}>
+              Delegating to {displayName}
+            </p>
+            <span className="text-[10px] text-muted-foreground/70">
+              Claude → {displayName}
+            </span>
+          </div>
+
+          {description && (
+            <p
+              className="mt-1 text-[11px] text-muted-foreground/80 leading-relaxed line-clamp-2"
+              title={description}
+            >
+              {description}
+            </p>
+          )}
+
+          {/* Raw JSON collapsed by default */}
+          <details className="mt-1.5">
+            <summary className="text-[11px] text-muted-foreground hover:text-foreground cursor-pointer transition-colors select-none">
+              Show full request
+            </summary>
+            <pre className="mt-1.5 text-[11px] font-mono text-muted-foreground bg-black/20 rounded p-2 overflow-x-auto whitespace-pre-wrap break-all max-h-48">
+              {JSON.stringify(d?.tool_input, null, 2)}
+            </pre>
+          </details>
+
+          {/* Permission retry buttons — same as other tools */}
+          {!isHistorical && onRetry && (
+            approvedRetryMode ? (
+              <p className="mt-2.5 text-[11px] text-emerald-400/80">
+                Allowed ({approveLabel(approvedRetryMode)})
+              </p>
+            ) : (
+              <div className="flex items-center gap-2 mt-2.5 flex-wrap">
+                <button
+                  onClick={() => handleApprove('default')}
+                  className="text-[11px] px-2.5 py-1 rounded-md font-medium transition-all hover:opacity-80 active:scale-95"
+                  style={{ background: 'rgba(52,211,153,0.12)', color: '#34D399', border: '1px solid rgba(52,211,153,0.35)' }}
+                >
+                  Yes, allow once
+                </button>
+                <button
+                  onClick={() => handleApprove('acceptEdits')}
+                  className="text-[11px] px-2.5 py-1 rounded-md font-medium transition-all hover:opacity-80 active:scale-95"
+                  style={{ background: 'rgba(245,158,11,0.12)', color: '#F59E0B', border: '1px solid rgba(245,158,11,0.35)' }}
+                >
+                  Allow file edits
+                </button>
+                <button
+                  onClick={() => handleApprove('dangerouslySkipPermissions')}
+                  className="text-[11px] px-2.5 py-1 rounded-md font-medium transition-all hover:opacity-80 active:scale-95"
+                  style={{ background: 'rgba(239,68,68,0.12)', color: '#EF4444', border: '1px solid rgba(239,68,68,0.35)' }}
+                >
+                  Allow all
+                </button>
+              </div>
+            )
+          )}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="rounded-lg p-3 text-sm flex items-start gap-2"
       style={{ background: outcomeBg, border: `1px solid ${outcomeBorder}` }}>

@@ -13,7 +13,7 @@ export function ProjectCard({ project }: ProjectCardProps) {
   const topToolColor = project.top_tool ? getToolColor(project.top_tool) : null;
 
   return (
-    <Link href={`/sessions?project=${encodeURIComponent(project.project_dir)}`}>
+    <Link href={`/projects/detail?project=${encodeURIComponent(project.project_dir)}`}>
       <Card className="card-hover-glow hover:border-primary/30 transition-all cursor-pointer h-full">
         <CardContent className="p-5 space-y-4">
           <div className="flex items-start justify-between gap-2">

@@ -312,13 +312,189 @@ function renderHTML(session: RowDataPacket, events: RowDataPacket[]): string {
 </html>`;
 }
 
+// ── Summary export HTML ───────────────────────────────────────────────────────
+
+const COST_EXPR_EXPORT = `
+  CASE WHEN model LIKE '%opus%' THEN
+    (input_tokens * 5.0 + output_tokens * 25.0 + cache_creation_tokens * 10.0 + cache_read_tokens * 0.50) / 1000000.0
+  WHEN model LIKE '%haiku%' THEN
+    (input_tokens * 1.0 + output_tokens * 5.0 + cache_creation_tokens * 2.0 + cache_read_tokens * 0.10) / 1000000.0
+  ELSE
+    (input_tokens * 3.0 + output_tokens * 15.0 + cache_creation_tokens * 6.0 + cache_read_tokens * 0.30) / 1000000.0
+  END
+`;
+
+function renderSummaryHTML(session: RowDataPacket, summaryData: {
+  header: RowDataPacket;
+  participants: RowDataPacket[];
+  moments: RowDataPacket[];
+  breakdown: RowDataPacket[];
+}): string {
+  const { header, participants, moments, breakdown } = summaryData;
+  const projectName = esc(session.project_name || 'Unknown Project');
+  const sessionId = esc(session.session_id);
+  const startDate = fmtDate(String(header.started_at ?? ''));
+  const duration = fmtDuration(Number(header.duration_seconds ?? 0));
+  const totalCost = fmtCost(Number(header.total_cost ?? 0));
+  const totalTokens = fmtTokens(Number(header.total_tokens ?? 0));
+  const turnCount = Number(header.turn_count ?? 0);
+  const errorCount = Number(header.error_count ?? 0);
+
+  const momentTypeColors: Record<string, string> = {
+    user_prompt: '#388bfd',
+    subagent_dispatch: '#bc8cff',
+    ask_user: '#d29922',
+    high_cost: '#e3804a',
+    error: '#f85149',
+    final_outcome: '#3fb950',
+  };
+
+  const momentIcon: Record<string, string> = {
+    user_prompt: '👤',
+    subagent_dispatch: '🤖',
+    ask_user: '❓',
+    high_cost: '📈',
+    error: '⚠',
+    final_outcome: '✓',
+  };
+
+  const momentRows = moments.map((m) => {
+    const color = momentTypeColors[String(m.moment_type)] ?? '#7d8590';
+    const icon = momentIcon[String(m.moment_type)] ?? '·';
+    const label = esc(String(m.moment_type).replace('_', ' '));
+    const timeStr = (() => {
+      try {
+        const d = new Date(String(m.timestamp ?? '').includes('T') ? String(m.timestamp) : String(m.timestamp).replace(' ', 'T'));
+        return isNaN(d.getTime()) ? '' : d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+      } catch { return ''; }
+    })();
+    let body = '';
+    if (m.content_snippet) {
+      const snip = String(m.content_snippet).replace(/\n/g, ' ').trim().slice(0, 120);
+      body = `<p class="moment-body">${esc(snip)}</p>`;
+    } else if (m.error_message) {
+      body = `<p class="moment-body moment-error-text">${esc(String(m.error_message).slice(0, 100))}</p>`;
+    }
+    return `<li class="moment-row">
+      <span class="moment-dot" style="color:${color}">${icon}</span>
+      <div class="moment-content">
+        <div class="moment-header">
+          <span class="moment-label" style="color:${color}">${label}</span>
+          <span class="moment-time">${timeStr}</span>
+        </div>
+        ${body}
+      </div>
+    </li>`;
+  }).join('\n');
+
+  const participantChips = [
+    ...(participants.some((p) => String(p.agent_value) === 'main')
+      ? ['<span class="chip chip-main">main agent</span>']
+      : []),
+    ...participants
+      .filter((p) => String(p.agent_value) !== 'main')
+      .map((p) => `<span class="chip chip-sub">${esc(String(p.agent_type ?? p.agent_value ?? 'subagent'))}${Number(p.dispatch_count) > 1 ? ` ×${p.dispatch_count}` : ''}</span>`),
+  ].join(' ');
+
+  const breakdownRows = breakdown
+    .map((b) => `<tr><td>${esc(String(b.model_family))}</td><td>${fmtTokens(Number(b.input_tokens ?? 0))}</td><td>${fmtTokens(Number(b.output_tokens ?? 0))}</td><td class="cost-cell">${fmtCost(Number(b.cost ?? 0))}</td></tr>`)
+    .join('\n');
+
+  const css = `
+    :root{--bg:#0d1117;--surf:#161b22;--surf2:#1c2128;--border:#30363d;--text:#e6edf3;--muted:#7d8590;--blue:#388bfd;--green:#3fb950;--orange:#d29922;--red:#f85149}
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:14px;line-height:1.6}
+    .wrap{max-width:760px;margin:0 auto;padding:24px 16px}
+    header{background:var(--surf);border:1px solid var(--border);border-radius:12px;padding:20px 24px;margin-bottom:24px}
+    header h1{font-size:20px;font-weight:600;margin-bottom:6px}
+    .meta{display:flex;flex-wrap:wrap;gap:12px;font-size:12px;color:var(--muted)}
+    .stats-grid{display:flex;flex-wrap:wrap;gap:24px;margin-bottom:24px}
+    .stat{display:flex;flex-direction:column;gap:2px}
+    .stat-label{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+    .stat-value{font-size:15px;font-family:'SF Mono',Consolas,monospace;font-weight:600}
+    .stat-value.cost{color:#d29922}
+    .stat-value.error{color:#f85149}
+    .section{margin-bottom:24px}
+    .section-title{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600;margin-bottom:10px}
+    .chip{display:inline-flex;align-items:center;font-size:11px;font-weight:500;padding:2px 8px;border-radius:20px;margin:2px}
+    .chip-main{background:#1a2e1a;color:#3fb950;border:1px solid #3fb95040}
+    .chip-sub{background:#2d1f5e;color:#bc8cff;border:1px solid #6e40c940}
+    .moments-list{list-style:none;padding:0}
+    .moment-row{display:flex;gap:10px;padding:6px 0;border-bottom:1px solid var(--border)}
+    .moment-row:last-child{border-bottom:none}
+    .moment-dot{font-size:13px;flex-shrink:0;width:18px;text-align:center;margin-top:1px}
+    .moment-content{flex:1;min-width:0}
+    .moment-header{display:flex;justify-content:space-between;gap:8px}
+    .moment-label{font-size:11px;font-weight:600;text-transform:capitalize}
+    .moment-time{font-size:10px;color:var(--muted);font-family:monospace;flex-shrink:0}
+    .moment-body{font-size:11px;color:var(--muted);margin-top:2px;word-break:break-word}
+    .moment-error-text{color:#f85149}
+    table{width:100%;border-collapse:collapse;font-size:12px}
+    th{text-align:left;padding:6px 12px;font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);border-bottom:1px solid var(--border)}
+    td{padding:8px 12px;border-bottom:1px solid var(--border);color:var(--text)}
+    .cost-cell{color:#d29922;font-family:monospace}
+    footer{margin-top:32px;padding-top:16px;border-top:1px solid var(--border);text-align:center;font-size:11px;color:var(--muted)}
+  `;
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1.0">
+  <title>Summary · ${projectName} — ${startDate}</title>
+  <style>${css}</style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>${projectName} — Summary</h1>
+      <div class="meta">
+        <span>📅 ${startDate}</span>
+        <span>⏱ ${duration}</span>
+        <span title="${sessionId}">🆔 ${sessionId.slice(0, 12)}…</span>
+      </div>
+    </header>
+
+    <div class="stats-grid">
+      <div class="stat"><span class="stat-label">Turns</span><span class="stat-value">${turnCount}</span></div>
+      <div class="stat"><span class="stat-label">Tokens</span><span class="stat-value">${totalTokens}</span></div>
+      <div class="stat"><span class="stat-label">Cost</span><span class="stat-value cost">${totalCost}</span></div>
+      ${errorCount > 0 ? `<div class="stat"><span class="stat-label">Errors</span><span class="stat-value error">${errorCount}</span></div>` : ''}
+    </div>
+
+    ${participantChips ? `<div class="section"><p class="section-title">Participants</p>${participantChips}</div>` : ''}
+
+    ${moments.length > 0 ? `
+    <div class="section">
+      <p class="section-title">Key Moments</p>
+      <ul class="moments-list">${momentRows}</ul>
+    </div>` : ''}
+
+    ${breakdown.length > 1 ? `
+    <div class="section">
+      <p class="section-title">Cost by Model</p>
+      <table>
+        <thead><tr><th>Model</th><th>Input tokens</th><th>Output tokens</th><th>Cost</th></tr></thead>
+        <tbody>${breakdownRows}</tbody>
+      </table>
+    </div>` : ''}
+
+    <footer>
+      Generated by <strong>Claude Code Dashboard</strong> (Summary view) · ${new Date().toLocaleString('en-US')}
+    </footer>
+  </div>
+</body>
+</html>`;
+}
+
 // ── Route handler ─────────────────────────────────────────────────────────────
 
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
+  const view = new URL(request.url).searchParams.get('view') ?? 'conversation';
 
   try {
     const [[session]] = await pool.query<RowDataPacket[]>(
@@ -343,6 +519,72 @@ export async function GET(
       return new NextResponse('Session not found', { status: 404 });
     }
 
+    const slug = String(session.project_name || id).replace(/[^a-z0-9]/gi, '-').toLowerCase();
+
+    // ── Summary export ──────────────────────────────────────────────────────
+    if (view === 'summary') {
+      const [[headerRow]] = await pool.query<RowDataPacket[]>(
+        `SELECT
+          s.started_at, s.last_seen_at,
+          TIMESTAMPDIFF('SECOND', s.started_at, s.last_seen_at) AS duration_seconds,
+          (SELECT COUNT(*) FROM cc_events WHERE session_id = s.session_id AND event_type = 'UserPromptSubmit') AS turn_count,
+          (SELECT COALESCE(SUM(input_tokens+output_tokens+cache_creation_tokens+cache_read_tokens),0) FROM cc_events WHERE session_id = s.session_id AND event_type IN ('Stop','SubagentStop')) AS total_tokens,
+          (SELECT ROUND(COALESCE(SUM(${COST_EXPR_EXPORT}),0),6) FROM cc_events WHERE session_id = s.session_id AND event_type IN ('Stop','SubagentStop')) AS total_cost,
+          (SELECT COUNT(*) FROM cc_events WHERE session_id = s.session_id AND is_error = 1) AS error_count
+        FROM cc_sessions s WHERE s.session_id = ?`,
+        [id]
+      );
+
+      const [participantRows] = await pool.query<RowDataPacket[]>(
+        `SELECT agent AS agent_value,
+          COALESCE(NULLIF(json_extract(raw_payload,'$.agent_type'),''),agent) AS agent_type,
+          COUNT(*) AS dispatch_count
+        FROM cc_events WHERE session_id = ? AND event_type = 'SubagentStop'
+        GROUP BY agent_value, agent_type ORDER BY dispatch_count DESC`,
+        [id]
+      );
+
+      const [momentRows] = await pool.query<RowDataPacket[]>(
+        `SELECT event_id, timestamp, moment_type, content_snippet, error_message FROM (
+          SELECT id AS event_id, timestamp, 'user_prompt' AS moment_type, SUBSTR(content,1,200) AS content_snippet, NULL AS error_message FROM cc_events WHERE session_id = ? AND event_type = 'UserPromptSubmit'
+          UNION ALL
+          SELECT id, timestamp, 'subagent_dispatch', NULL, NULL FROM cc_events WHERE session_id = ? AND event_type = 'SubagentStop' AND agent <> 'main'
+          UNION ALL
+          SELECT id, timestamp, 'ask_user', SUBSTR(tool_input,1,200), NULL FROM cc_events WHERE session_id = ? AND event_type = 'PreToolUse' AND tool_name = 'AskUserQuestion'
+          UNION ALL
+          SELECT id, timestamp, 'high_cost', NULL, NULL FROM cc_events WHERE session_id = ? AND event_type IN ('Stop','SubagentStop') AND (${COST_EXPR_EXPORT}) > 0.50
+          UNION ALL
+          SELECT id, timestamp, 'error', NULL, error_message FROM cc_events WHERE session_id = ? AND is_error = 1
+          UNION ALL
+          SELECT id, timestamp, 'final_outcome', NULL, NULL FROM cc_events WHERE session_id = ? AND event_type = 'Stop' AND id = (SELECT MAX(id) FROM cc_events WHERE session_id = ? AND event_type = 'Stop')
+        ) m ORDER BY timestamp ASC LIMIT 20`,
+        [id, id, id, id, id, id, id]
+      );
+
+      const [breakdownRows] = await pool.query<RowDataPacket[]>(
+        `SELECT CASE WHEN model LIKE '%opus%' THEN 'opus' WHEN model LIKE '%haiku%' THEN 'haiku' ELSE 'sonnet' END AS model_family,
+          SUM(input_tokens) AS input_tokens, SUM(output_tokens) AS output_tokens, ROUND(SUM(${COST_EXPR_EXPORT}),6) AS cost
+        FROM cc_events WHERE session_id = ? AND event_type IN ('Stop','SubagentStop') GROUP BY model_family ORDER BY cost DESC`,
+        [id]
+      );
+
+      const html = renderSummaryHTML(session, {
+        header: headerRow ?? {},
+        participants: participantRows,
+        moments: momentRows,
+        breakdown: breakdownRows,
+      });
+
+      const filename = `summary-${slug}-${id.slice(0, 8)}.html`;
+      return new NextResponse(html, {
+        headers: {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Content-Disposition': `attachment; filename="${filename}"`,
+        },
+      });
+    }
+
+    // ── Conversation export (original) ──────────────────────────────────────
     const [events] = await pool.query<RowDataPacket[]>(
       `SELECT
         id, event_type, timestamp, agent, role, content,
@@ -357,7 +599,6 @@ export async function GET(
     );
 
     const html = renderHTML(session, events as RowDataPacket[]);
-    const slug = String(session.project_name || id).replace(/[^a-z0-9]/gi, '-').toLowerCase();
     const filename = `session-${slug}-${id.slice(0, 8)}.html`;
 
     return new NextResponse(html, {

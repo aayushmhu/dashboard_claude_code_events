@@ -83,7 +83,7 @@ export function ConversationThread({ events, thinkingByEventId }: ConversationTh
 
     if (event.event_type === 'SessionStart') {
       rendered.push(
-        <div key={event.id} className="flex items-center gap-3 my-6">
+        <div key={event.id} id={`event-${event.id}`} className="flex items-center gap-3 my-6">
           <div className="h-px flex-1 bg-border/60" />
           <div className="flex items-center gap-1.5 text-xs text-muted-foreground/60 bg-muted/30 rounded-full px-3 py-1 border border-border/40">
             <Play className="h-2.5 w-2.5" />
@@ -99,7 +99,7 @@ export function ConversationThread({ events, thinkingByEventId }: ConversationTh
 
     if (event.event_type === 'Notification') {
       rendered.push(
-        <div key={event.id} className="flex justify-center my-3">
+        <div key={event.id} id={`event-${event.id}`} className="flex justify-center my-3">
           <div
             className="flex items-center gap-1.5 text-xs rounded-full px-3 py-1.5"
             style={{
@@ -132,7 +132,7 @@ export function ConversationThread({ events, thinkingByEventId }: ConversationTh
         continue;
       }
       rendered.push(
-        <div key={event.id} className="flex flex-col items-end gap-1.5 my-4 px-4">
+        <div key={event.id} id={`event-${event.id}`} className="flex flex-col items-end gap-1.5 my-4 px-4">
           <div className="flex items-center gap-2">
             <Timestamp ts={event.timestamp} />
             <div className="flex items-center gap-1 text-xs font-medium" style={{ color: ROLE_COLORS.user }}>
@@ -158,14 +158,14 @@ export function ConversationThread({ events, thinkingByEventId }: ConversationTh
       const isSubagent = event.event_type === 'SubagentStop';
 
       if (isSubagent) {
-        const agentName = event.agent || 'subagent';
+        const agentName = event.agent_type || event.agent || 'subagent';
         const displayName = formatAgentName(agentName);
         const agentColor = getAgentColor(agentName);
         const AgentIcon = getAgentIconComponent(getAgentIconType(agentName));
 
         const agentThinking = thinkingByEventId?.get(event.id);
         rendered.push(
-          <div key={event.id} className="flex flex-col items-start gap-1.5 my-4 px-4">
+          <div key={event.id} id={`event-${event.id}`} className="flex flex-col items-start gap-1.5 my-4 px-4">
             <div className="flex items-center gap-2">
               <div className="flex items-center gap-1.5 text-xs font-medium" style={{ color: agentColor.text }}>
                 <div
@@ -214,7 +214,7 @@ export function ConversationThread({ events, thinkingByEventId }: ConversationTh
       } else {
         const thinking = thinkingByEventId?.get(event.id);
         rendered.push(
-          <div key={event.id} className="flex flex-col items-start gap-1.5 my-4 px-4">
+          <div key={event.id} id={`event-${event.id}`} className="flex flex-col items-start gap-1.5 my-4 px-4">
             <div className="flex items-center gap-2">
               <div className="flex items-center gap-1.5 text-xs font-medium" style={{ color: ROLE_COLORS.assistant }}>
                 <div
@@ -264,7 +264,7 @@ export function ConversationThread({ events, thinkingByEventId }: ConversationTh
       if (post) skipIds.add(post.id);
 
       rendered.push(
-        <div key={event.id} className="my-2 px-4">
+        <div key={event.id} id={`event-${event.id}`} className="my-2 px-4">
           <div className="max-w-[88%]">
             <ToolCallCard
               toolName={event.tool_name || 'Unknown'}
@@ -282,7 +282,7 @@ export function ConversationThread({ events, thinkingByEventId }: ConversationTh
 
     if (event.event_type === 'PostToolUse') {
       rendered.push(
-        <div key={event.id} className="my-2 px-4">
+        <div key={event.id} id={`event-${event.id}`} className="my-2 px-4">
           <div className="max-w-[88%]">
             <ToolCallCard
               toolName={event.tool_name || 'Unknown'}

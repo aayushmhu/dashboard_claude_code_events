@@ -29,7 +29,7 @@ export function AgentDonut({ data }: AgentDonutProps) {
   const [hovered, setHovered] = useState<number | null>(null);
 
   const chartData = data.map((d) => ({
-    name: d.agent_type ? `${d.agent} (${d.agent_type})` : d.agent,
+    name: d.agent_type && d.agent_type !== d.agent ? `${d.agent_type} (${d.agent})` : (d.agent_type || d.agent),
     value: d.event_count,
   }));
 

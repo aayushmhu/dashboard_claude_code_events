@@ -1,0 +1,115 @@
+{
+  "project": "claude-code-dashboard",
+  "last_updated": "2026-05-20T22:00",
+  "rules": {
+    "single_active_feature": true,
+    "passing_requires_evidence": true,
+    "do_not_skip_verification": true
+  },
+  "status_legend": {
+    "not_started": "Work has not begun.",
+    "active": "The feature is the current active task. AT MOST ONE feature may be 'active' at any time.",
+    "blocked": "Work cannot continue until a documented blocker is resolved.",
+    "passing": "Required verification has passed and evidence is recorded."
+  },
+  "features": [
+    {
+      "id": "summary-001",
+      "priority": 1,
+      "area": "session-summary",
+      "title": "Prompt-anchored moments on Session Summary",
+      "user_visible_behavior": "Each user prompt anchors a row with cost, turn count, file edits, top tools, and a response excerpt — so the page reads as a narrative of the session, not a stats dashboard.",
+      "status": "passing",
+      "verification": [
+        "Open /conversations/0f018f00-4a24-4e1d-bf1a-aaa297d874a7/summary",
+        "Confirm the Prompts section appears below the Participants strip",
+        "Confirm the first row shows: prompt text + ↳ response excerpt + metadata line (turns · files · cost · tool chips)",
+        "Confirm 'Show all N prompts' button appears when N > 20",
+        "Run npx tsc --noEmit and confirm exit 0"
+      ],
+      "evidence": [
+        "Commit d4d7b75 (Phase 8 — prompt-anchored session summary, project detail rebuild)",
+        "Type-check clean as of 2026-05-20",
+        "Playwright screenshot captured at $TMPDIR/summary-rebuilt/desktop.png"
+      ],
+      "notes": "Phase 1 + 1.1 shipped together after a revert / rebuild cycle."
+    },
+    {
+      "id": "summary-002",
+      "priority": 2,
+      "area": "session-summary",
+      "title": "Bidirectional scroll + focus-event on conversations page",
+      "user_visible_behavior": "Clicking the ↗ jump icon on a prompt row opens the conversation centered on that event, with the original lazy-load behavior preserved for older AND newer events.",
+      "status": "not_started",
+      "verification": [
+        "From /conversations/[id]/summary, click ↗ on any prompt row",
+        "Verify the conversations page opens with the target event in view + briefly highlighted",
+        "Scroll up to trigger before_id pagination — confirm older events load",
+        "Scroll down to trigger after_id pagination — confirm newer events load and stop when at latest",
+        "Confirm no regression when opening /conversations/[id] without ?focus param"
+      ],
+      "evidence": [],
+      "notes": "Queued as Phase 1.2. Adds after_id and focus_id params to /api/sessions/[id]/events. Bidirectional IntersectionObserver in the conversations client."
+    },
+    {
+      "id": "summary-003",
+      "priority": 3,
+      "area": "session-summary",
+      "title": "Render task-notification XML as readable rows",
+      "user_visible_behavior": "Prompts whose content starts with <task-notification> render as 'Agent task completed: <summary>' with a bot icon, instead of raw XML.",
+      "status": "not_started",
+      "verification": [
+        "Find a session that includes an agent task notification (audit session 0f018f00 has many)",
+        "Confirm rows starting with <task-notification> show parsed summary, not raw tags",
+        "Confirm <ide_opened_file> and <system-reminder> get similar treatment",
+        "Confirm normal user prompts are unchanged"
+      ],
+      "evidence": [],
+      "notes": "Bundled with summary-002 as Phase 1.2."
+    },
+    {
+      "id": "infra-001",
+      "priority": 0,
+      "area": "harness-infrastructure",
+      "title": "Adopt harness-engineering methodology + team upgrade + AGENTS.md split",
+      "user_visible_behavior": "Repo follows the learn-harness-engineering methodology end-to-end: harness artifacts at root, AGENTS.md as the entry point, 8-agent team with clear boundaries, harness-engineering skill owned by CEO, feature planning files required before code, single source of truth for rules.",
+      "status": "passing",
+      "verification": [
+        "AGENTS.md exists at root with project overview + run commands + 15 hard constraints",
+        "CLAUDE.md slimmed to architecture detail only (no duplicate rules section)",
+        ".claude/skills/harness-engineering/SKILL.md exists with full methodology distillation",
+        ".claude/agents/ contains exactly 8 files (operational + specialist + audit roles)",
+        "All agents have 'What you do NOT do' + 'When you find yourself out of scope' sections",
+        "docs/ reorganized into planning/product/testing/requirement/",
+        "feature_list.json, claude-progress.md, session-handoff.md, clean-state-checklist.md, evaluator-rubric.md, quality-document.md all present at root",
+        "docs/planning/features/_TEMPLATE.md has 8 sections (incl. §6 Files touched)",
+        "Zero broken file refs, zero absolute /Users/ paths, zero stale CLAUDE.md Rule references"
+      ],
+      "evidence": [
+        "docs/planning/features/2026-05-20-team-upgrade.md (status: shipped)",
+        "TC-TU-01 through TC-TU-07 all PASS per the planning file's §5 Execution log",
+        "Final wide-sweep audit clean (this session's verification)"
+      ],
+      "notes": "Foundation work that enables every future feature to follow the methodology. Pre-condition for everything queued."
+    },
+    {
+      "id": "rules-audit-001",
+      "priority": 4,
+      "area": "insights",
+      "title": "Rule library audit — verify all 15 rules fire correctly",
+      "user_visible_behavior": "Each of the 15 insight rules in app/api/insights/route.ts produces correct output (or correctly stays silent) when dry-run against the live DB.",
+      "status": "active",
+      "verification": [
+        "For each rule, run the SQL against ~/.claude-dashboard/dashboard.db",
+        "Confirm the rule fires on the expected sessions",
+        "Confirm body text reads correctly with live numbers",
+        "Confirm edge cases enumerated in docs/product/insight-specs/ are handled",
+        "Record per-rule verdict in docs/testing/_AUDIT_2026-05-16.md"
+      ],
+      "evidence": [
+        "docs/testing/_AUDIT_2026-05-16.md (initial audit covering 11/15 rules; verdicts: all OK except opus-verbose-output spec doc needs price update)"
+      ],
+      "notes": "4 rules still need dry-runs. Owner: insights-engineer."
+    }
+  ]
+}

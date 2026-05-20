@@ -52,6 +52,7 @@ You are the Engineer for the Claude Code Activity Dashboard. You write the code 
 8. **Check all downstream consumers.** When fixing a display-layer data bug (e.g., a wrong column in an API SELECT), always check all downstream consumers of that API — not just the component named in the brief. Donut charts, summary panels, and other components may read the same API and need the same fix.
 9. **SQL escaping.** The SQLite pool wrapper in [lib/db.ts](lib/db.ts) has no `escape()` method. Build optional WHERE clauses with conditional `string[]` + parameterized params (see how [app/api/tokens/route.ts](app/api/tokens/route.ts) handles the optional `start`/`end` filters) — never string-interpolate user-supplied values into SQL.
 10. **Post-refactor unused-import audit.** After extracting a shared layout component that takes over routing/navigation, the original consumer often ends up with unused `useRouter`, `usePathname`, or similar imports. Strip them before running type-check. Doesn't break the build (TS allows unused imports under `noUnusedLocals: false`), but it's noise.
+11. **Write call sites before helpers.** Don't define a helper function (`MiniStat`, `CollapsibleSection`, etc.) until the call site that needs it is written. Defining helpers speculatively leads to unused-declaration cleanup passes and noisy diagnostics. Build top-down, not bottom-up.
 
 **Style conventions** (from existing code):
 - Functional components with named exports.

@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import Link from 'next/link';
 import { Header } from '@/components/header';
 
 export const metadata: Metadata = { title: 'Tokens' };
@@ -233,16 +234,24 @@ export default async function TokensPage({
                   </tr>
                 </thead>
                 <tbody>
-                  {by_project.map((p) => (
-                    <tr key={p.project_dir} className="border-b border-border/50 hover:bg-muted/30 transition-colors">
-                      <td className="py-3 pr-6 font-medium">{p.project_name}</td>
-                      <td className="py-3 pr-6 text-right text-muted-foreground">{formatTokens(p.input_tokens)}</td>
-                      <td className="py-3 pr-6 text-right text-muted-foreground">{formatTokens(p.output_tokens)}</td>
-                      <td className="py-3 pr-6 text-right text-emerald-400">{formatTokens(p.cache_read_tokens)}</td>
-                      <td className="py-3 pr-6 text-right font-medium">{formatTokens(p.total_tokens)}</td>
-                      <td className="py-3 text-right font-medium text-amber-400">{formatCost(p.cost)}</td>
-                    </tr>
-                  ))}
+                  {by_project.map((p) => {
+                    const href = `/projects/detail?project=${encodeURIComponent(p.project_dir)}`;
+                    return (
+                      <tr key={p.project_dir} className="group border-b border-border/50 hover:bg-muted/30 transition-colors">
+                        <td className="py-3 pr-6 font-medium">
+                          <Link href={href} className="inline-flex items-center gap-1 text-foreground hover:text-primary transition-colors" title={p.project_dir}>
+                            <span className="truncate">{p.project_name}</span>
+                            <span className="opacity-0 group-hover:opacity-60 text-primary transition-opacity">&rarr;</span>
+                          </Link>
+                        </td>
+                        <td className="py-3 pr-6 text-right text-muted-foreground"><Link href={href} className="block">{formatTokens(p.input_tokens)}</Link></td>
+                        <td className="py-3 pr-6 text-right text-muted-foreground"><Link href={href} className="block">{formatTokens(p.output_tokens)}</Link></td>
+                        <td className="py-3 pr-6 text-right text-emerald-400"><Link href={href} className="block">{formatTokens(p.cache_read_tokens)}</Link></td>
+                        <td className="py-3 pr-6 text-right font-medium"><Link href={href} className="block">{formatTokens(p.total_tokens)}</Link></td>
+                        <td className="py-3 text-right font-medium text-amber-400"><Link href={href} className="block">{formatCost(p.cost)}</Link></td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

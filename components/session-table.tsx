@@ -11,6 +11,7 @@ import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip
 interface SessionTableProps {
   sessions: Session[];
   hideTools?: boolean;
+  showSessionId?: boolean;
 }
 
 
@@ -28,7 +29,7 @@ function EntrypointIcon({ entrypoint }: { entrypoint?: string | null }) {
   );
 }
 
-export function SessionTable({ sessions, hideTools = false }: SessionTableProps) {
+export function SessionTable({ sessions, hideTools = false, showSessionId = false }: SessionTableProps) {
   const router = useRouter();
 
   if (sessions.length === 0) {
@@ -60,7 +61,9 @@ export function SessionTable({ sessions, hideTools = false }: SessionTableProps)
               {/* Row 1: project + status */}
               <div className="flex items-start justify-between gap-2 mb-1.5">
                 <div className="min-w-0">
-                  <p className="font-medium text-sm truncate">{session.project_name || '—'}</p>
+                  <p className={`font-medium text-sm truncate ${showSessionId ? 'font-mono text-foreground/80' : ''}`}>
+                    {showSessionId ? session.session_id.slice(0, 8) : (session.project_name || '—')}
+                  </p>
                   <div className="flex items-center gap-1 mt-0.5">
                     <EntrypointIcon entrypoint={session.entrypoint} />
                     {session.thinking_count > 0 && (
@@ -121,7 +124,7 @@ export function SessionTable({ sessions, hideTools = false }: SessionTableProps)
         <table className="w-full text-sm min-w-[480px]">
           <thead>
             <tr className="border-b border-border/60 text-left text-xs text-muted-foreground/60">
-              <th className="pb-3 pr-4 font-medium uppercase tracking-wide">Project</th>
+              <th className="pb-3 pr-4 font-medium uppercase tracking-wide">{showSessionId ? 'Session' : 'Project'}</th>
               <th className="pb-3 pr-4 font-medium uppercase tracking-wide">Last Active</th>
               <th className="pb-3 pr-4 font-medium uppercase tracking-wide">Duration</th>
               <th className="pb-3 pr-4 font-medium uppercase tracking-wide">Tokens</th>
@@ -147,7 +150,9 @@ export function SessionTable({ sessions, hideTools = false }: SessionTableProps)
                 className="group border-b border-border/30 hover:bg-white/[0.02] transition-colors cursor-pointer"
               >
                 <td className="py-3 pr-4 max-w-[160px]">
-                  <span className="font-medium text-sm truncate block">{session.project_name || '—'}</span>
+                  <span className={`font-medium text-sm truncate block ${showSessionId ? 'font-mono text-foreground/80' : ''}`}>
+                    {showSessionId ? session.session_id.slice(0, 8) : (session.project_name || '—')}
+                  </span>
                   <div className="flex items-center gap-1 mt-0.5">
                     <EntrypointIcon entrypoint={session.entrypoint} />
                     {session.thinking_count > 0 && (

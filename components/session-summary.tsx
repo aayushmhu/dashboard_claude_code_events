@@ -17,9 +17,10 @@ import {
   TrendingUp,
   CheckCircle2,
   ChevronRight,
+  ArrowRight,
 } from 'lucide-react';
 import { cn, formatDuration, formatTokens, formatCost, parseDbDate } from '@/lib/utils';
-import { getAgentColor } from '@/lib/colors';
+import { getAgentColor, TOOL_COLORS } from '@/lib/colors';
 import { Skeleton } from '@/components/ui/skeleton';
 import type {
   SessionSummaryResponse,
@@ -27,6 +28,7 @@ import type {
   SessionSummaryParticipants,
   SessionSummaryHeader,
   SessionSummaryModelBreakdown,
+  SessionSummaryPrompt,
 } from '@/app/api/sessions/[id]/summary/route';
 
 // ─── User name resolution (strict rule: env var or "User") ───────────────────
@@ -502,6 +504,7 @@ function SummaryBody({
   participants,
   key_moments,
   model_breakdown,
+  prompts,
   startedStr,
   sessionId,
   isPage,
@@ -511,6 +514,7 @@ function SummaryBody({
   participants: SessionSummaryParticipants;
   key_moments: SessionSummaryMoment[];
   model_breakdown: SessionSummaryModelBreakdown[];
+  prompts: SessionSummaryPrompt[];
   startedStr: string;
   sessionId: string;
   isPage: boolean;
@@ -579,29 +583,13 @@ function SummaryBody({
         </>
       )}
 
-      {/* ── Key moments timeline ── */}
-      {key_moments.length > 0 && (
-        <>
-          <div>
-            <p className="text-[10px] uppercase tracking-wider font-medium text-muted-foreground mb-3">
-              Key Moments
-            </p>
-            <ol className="relative space-y-0">
-              {key_moments.map((m, i) => (
-                <MomentRow
-                  key={`${m.event_id}-${m.moment_type}`}
-                  m={m}
-                  isLast={i === key_moments.length - 1}
-                  isPage={isPage}
-                  sessionId={sessionId}
-                  onScrollToEvent={onScrollToEvent}
-                />
-              ))}
-            </ol>
-          </div>
-          <div className="h-px bg-border" />
-        </>
-      )}
+      {/* ── Prompts ── */}
+      <PromptsSection
+        prompts={prompts}
+        sessionId={sessionId}
+        mode={isPage ? 'page' : 'panel'}
+        onScrollToEvent={onScrollToEvent}
+      />
 
       {/* ── Model breakdown (only when >1 model family) ── */}
       {model_breakdown.length > 1 && (
@@ -624,6 +612,177 @@ function SummaryBody({
         </div>
       )}
     </>
+  );
+}
+
+// ─── Prompts section (Phase 1 + 1.1) ─────────────────────────────────────────
+
+function ToolChip({ name }: { name: string }) {
+  const color = TOOL_COLORS[name as keyof typeof TOOL_COLORS] ?? '#94a3b8';
+  return (
+    <span
+      className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium"
+      style={{ background: `${color}15`, color, border: `1px solid ${color}55` }}
+    >
+      {name}
+    </span>
+  );
+}
+
+function PromptRow({
+  prompt,
+  sessionId,
+  mode,
+  onScrollToEvent,
+}: {
+  prompt: SessionSummaryPrompt;
+  sessionId: string;
+  mode: 'panel' | 'page';
+  onScrollToEvent?: (id: number) => void;
+}) {
+  const time = (() => {
+    try {
+      const d = parseDbDate(prompt.timestamp);
+      return d.toTimeString().slice(0, 5);
+    } catch { return ''; }
+  })();
+
+  const extraTools = prompt.tool_type_count - prompt.top_tools.length;
+
+  const jumpInner = (
+    <ArrowRight className="h-3.5 w-3.5 text-muted-foreground/40 group-hover:text-primary transition-colors flex-shrink-0" />
+  );
+  const jump = mode === 'panel'
+    ? (
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); onScrollToEvent?.(prompt.prompt_id); }}
+          className="flex-shrink-0"
+          aria-label="Jump to this prompt in conversation"
+        >
+          {jumpInner}
+        </button>
+      )
+    : (
+        <Link
+          href={`/conversations/${sessionId}#event-${prompt.prompt_id}`}
+          className="flex-shrink-0"
+          aria-label="Jump to this prompt in conversation"
+        >
+          {jumpInner}
+        </Link>
+      );
+
+  return (
+    <div
+      className={cn(
+        'group px-4 py-3 border-b border-border/40 last:border-0 transition-colors hover:bg-muted/20',
+        prompt.has_error && 'border-l-2 border-l-red-500/70'
+      )}
+    >
+      <div className="flex items-start gap-3 min-w-0">
+        <span className="text-[10px] font-mono text-muted-foreground/70 tabular-nums w-12 flex-shrink-0 pt-0.5">
+          {time}
+        </span>
+        <p
+          className="text-sm text-foreground/90 truncate min-w-0 flex-1"
+          title={prompt.prompt_text}
+        >
+          {prompt.prompt_text || <span className="italic text-muted-foreground">(empty prompt)</span>}
+        </p>
+        {jump}
+      </div>
+      {prompt.response_excerpt && (
+        <div className="flex items-start gap-1.5 pl-[60px] min-w-0 mt-1">
+          <span className="text-muted-foreground/50 text-xs flex-shrink-0 select-none" aria-hidden>↳</span>
+          <p
+            className="text-xs text-muted-foreground/80 italic leading-snug break-words min-w-0"
+            title={prompt.response_excerpt}
+          >
+            {prompt.response_excerpt}
+          </p>
+        </div>
+      )}
+      <div className="flex items-center flex-wrap gap-2 mt-1.5 pl-[60px] text-[11px] text-muted-foreground">
+        <span>{prompt.turn_count} {prompt.turn_count === 1 ? 'turn' : 'turns'}</span>
+        {prompt.file_edit_count > 0 && (
+          <>
+            <span className="text-muted-foreground/40">·</span>
+            <span>{prompt.file_edit_count} {prompt.file_edit_count === 1 ? 'file' : 'files'}</span>
+          </>
+        )}
+        <span className="text-muted-foreground/40">·</span>
+        <span className="font-mono text-amber-400/80">{formatCost(prompt.moment_cost)}</span>
+        {prompt.top_tools.length > 0 && (
+          <>
+            <span className="text-muted-foreground/40">·</span>
+            <div className="flex items-center gap-1 flex-wrap">
+              {prompt.top_tools.map((t) => <ToolChip key={t} name={t} />)}
+              {extraTools > 0 && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-muted/50 text-muted-foreground border border-border/60">
+                  +{extraTools}
+                </span>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function PromptsSection({
+  prompts,
+  sessionId,
+  mode,
+  onScrollToEvent,
+}: {
+  prompts: SessionSummaryPrompt[];
+  sessionId: string;
+  mode: 'panel' | 'page';
+  onScrollToEvent?: (id: number) => void;
+}) {
+  const [showAll, setShowAll] = useState(false);
+  if (prompts.length === 0) return null;
+  const visible = showAll ? prompts : prompts.slice(0, 20);
+  const hidden = prompts.length - visible.length;
+
+  return (
+    <div className="rounded-xl border border-border bg-card overflow-hidden">
+      <div className="flex items-center justify-between px-4 py-2.5 border-b border-border">
+        <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+          Prompts ({prompts.length})
+        </h3>
+        {mode === 'panel' && (
+          <Link
+            href={`/conversations/${sessionId}`}
+            className="text-[11px] text-muted-foreground hover:text-primary transition-colors"
+          >
+            See all in thread →
+          </Link>
+        )}
+      </div>
+      <div>
+        {visible.map((p) => (
+          <PromptRow
+            key={p.prompt_id}
+            prompt={p}
+            sessionId={sessionId}
+            mode={mode}
+            onScrollToEvent={onScrollToEvent}
+          />
+        ))}
+      </div>
+      {hidden > 0 && (
+        <button
+          type="button"
+          onClick={() => setShowAll(true)}
+          className="w-full px-4 py-2.5 text-xs text-muted-foreground hover:text-foreground border-t border-dashed border-border hover:bg-muted/30 transition-colors"
+        >
+          Show all {prompts.length} prompts
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -673,7 +832,7 @@ export function SessionSummary({ sessionId, mode = 'panel', onScrollToEvent }: S
 
   if (!data) return null;
 
-  const { header, participants, key_moments, model_breakdown } = data;
+  const { header, participants, key_moments, model_breakdown, prompts } = data;
 
   const hasNoActivity =
     header.turn_count === 0 &&
@@ -705,6 +864,7 @@ export function SessionSummary({ sessionId, mode = 'panel', onScrollToEvent }: S
             participants={participants}
             key_moments={key_moments}
             model_breakdown={model_breakdown}
+            prompts={prompts}
             startedStr={startedStr}
             sessionId={sessionId}
             isPage={true}
@@ -744,6 +904,7 @@ export function SessionSummary({ sessionId, mode = 'panel', onScrollToEvent }: S
               participants={participants}
               key_moments={key_moments}
               model_breakdown={model_breakdown}
+              prompts={prompts}
               startedStr={startedStr}
               sessionId={sessionId}
               isPage={false}

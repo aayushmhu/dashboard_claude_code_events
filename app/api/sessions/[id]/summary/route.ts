@@ -55,11 +55,26 @@ export interface SessionSummaryModelBreakdown {
   cost: number;
 }
 
+export interface SessionSummaryPrompt {
+  prompt_id: number;
+  timestamp: string;
+  prompt_text: string;          // truncated to 120 chars + … if longer
+  turn_count: number;           // count of Stop/SubagentStop in window
+  tool_call_count: number;
+  file_edit_count: number;      // PostToolUse where tool_name IN (Edit,Write,MultiEdit,NotebookEdit)
+  moment_cost: number;
+  has_error: boolean;           // any is_error=1 in window
+  top_tools: string[];          // top 3 PostToolUse tool_names by count
+  tool_type_count: number;      // total distinct tools in window
+  response_excerpt: string | null; // Phase 1.1: last main-agent assistant content in window
+}
+
 export interface SessionSummaryResponse {
   header: SessionSummaryHeader;
   participants: SessionSummaryParticipants;
   key_moments: SessionSummaryMoment[];
   model_breakdown: SessionSummaryModelBreakdown[];
+  prompts: SessionSummaryPrompt[];
 }
 
 // ─── Cost SQL fragment (per-row, used in multiple slices) ─────────────────────
@@ -349,11 +364,142 @@ export async function GET(
       cost: Number(r.cost ?? 0),
     }));
 
+    // ── Slice 5: Prompts (Phase 1 + 1.1) ──────────────────────────────────────
+    // Window-based: each UserPromptSubmit + everything until next UserPromptSubmit
+    const [promptHeaders] = await pool.query<RowDataPacket[]>(
+      `SELECT
+        id AS prompt_id,
+        timestamp,
+        COALESCE(content, '') AS prompt_text,
+        LEAD(id) OVER (ORDER BY id) AS next_prompt_id
+      FROM cc_events
+      WHERE session_id = ? AND event_type = 'UserPromptSubmit'
+      ORDER BY id ASC`,
+      [id]
+    );
+
+    // Fetch all relevant events for the windows in one go
+    const [windowEvents] = await pool.query<RowDataPacket[]>(
+      `SELECT id, event_type, tool_name, is_error,
+              input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, model
+       FROM cc_events
+       WHERE session_id = ?
+         AND event_type IN ('Stop','SubagentStop','PostToolUse')
+       ORDER BY id ASC`,
+      [id]
+    );
+
+    // Phase 1.1: assistant content for response excerpts
+    const [assistantRows] = await pool.query<RowDataPacket[]>(
+      `SELECT id, COALESCE(agent,'') AS agent, COALESCE(content,'') AS content
+       FROM cc_events
+       WHERE session_id = ?
+         AND role = 'assistant'
+         AND content IS NOT NULL AND TRIM(content) != ''
+       ORDER BY id ASC`,
+      [id]
+    );
+
+    function costOf(r: RowDataPacket): number {
+      const m = String(r.model ?? '').toLowerCase();
+      const input = Number(r.input_tokens ?? 0);
+      const output = Number(r.output_tokens ?? 0);
+      const cw = Number(r.cache_creation_tokens ?? 0);
+      const cr = Number(r.cache_read_tokens ?? 0);
+      if (m.includes('opus'))  return (input*5 + output*25 + cw*10 + cr*0.5) / 1_000_000;
+      if (m.includes('haiku')) return (input*1 + output*5 + cw*2  + cr*0.1) / 1_000_000;
+      return                          (input*3 + output*15 + cw*6  + cr*0.3) / 1_000_000;
+    }
+
+    function stripMarkdown(raw: string): string {
+      return raw.replace(/```[\s\S]*?```/g, '').replace(/`[^`]*`/g, '').replace(/\n+/g, ' ').trim();
+    }
+
+    const FILE_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
+
+    const prompts: SessionSummaryPrompt[] = [];
+    let eIdx = 0;
+    let aIdx = 0;
+
+    for (const ph of promptHeaders) {
+      const startId = Number(ph.prompt_id);
+      const endId = ph.next_prompt_id != null ? Number(ph.next_prompt_id) : Number.MAX_SAFE_INTEGER;
+
+      let turn_count = 0;
+      let tool_call_count = 0;
+      let file_edit_count = 0;
+      let moment_cost = 0;
+      let has_error = false;
+      const toolFreq: Record<string, number> = {};
+
+      while (eIdx < windowEvents.length && Number(windowEvents[eIdx].id) <= startId) eIdx++;
+      let scan = eIdx;
+      while (scan < windowEvents.length && Number(windowEvents[scan].id) < endId) {
+        const ev = windowEvents[scan];
+        const evType = String(ev.event_type);
+        if (evType === 'Stop' || evType === 'SubagentStop') {
+          turn_count++;
+          moment_cost += costOf(ev);
+        } else if (evType === 'PostToolUse' && ev.tool_name) {
+          tool_call_count++;
+          const tn = String(ev.tool_name);
+          toolFreq[tn] = (toolFreq[tn] || 0) + 1;
+          if (FILE_TOOLS.has(tn)) file_edit_count++;
+        }
+        if (Number(ev.is_error ?? 0) === 1) has_error = true;
+        scan++;
+      }
+
+      // Phase 1.1: last main-agent assistant content in window
+      while (aIdx < assistantRows.length && Number(assistantRows[aIdx].id) <= startId) aIdx++;
+      let aScan = aIdx;
+      let lastMain: string | null = null;
+      let lastAny: string | null = null;
+      while (aScan < assistantRows.length && Number(assistantRows[aScan].id) < endId) {
+        const row = assistantRows[aScan];
+        const c = String(row.content ?? '');
+        if (c) {
+          lastAny = c;
+          if (String(row.agent ?? '') === 'main') lastMain = c;
+        }
+        aScan++;
+      }
+      const raw = lastMain ?? lastAny;
+      let response_excerpt: string | null = null;
+      if (raw) {
+        const s = stripMarkdown(raw);
+        response_excerpt = s.length > 180 ? s.slice(0, 180) + '…' : (s || null);
+      }
+
+      const top_tools = Object.entries(toolFreq)
+        .sort((a,b) => b[1] - a[1])
+        .slice(0, 3)
+        .map(([name]) => name);
+
+      const ptxt = String(ph.prompt_text ?? '');
+      const prompt_text = ptxt.length > 120 ? ptxt.slice(0, 120) + '…' : ptxt;
+
+      prompts.push({
+        prompt_id: startId,
+        timestamp: String(ph.timestamp ?? ''),
+        prompt_text,
+        turn_count,
+        tool_call_count,
+        file_edit_count,
+        moment_cost: Math.round(moment_cost * 1_000_000) / 1_000_000,
+        has_error,
+        top_tools,
+        tool_type_count: Object.keys(toolFreq).length,
+        response_excerpt,
+      });
+    }
+
     const response: SessionSummaryResponse = {
       header,
       participants,
       key_moments,
       model_breakdown,
+      prompts,
     };
 
     return NextResponse.json(response);

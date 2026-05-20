@@ -35,7 +35,7 @@ async function getData(sp: SearchParams) {
   const base = process.env.NEXT_PUBLIC_APP_URL || `http://localhost:${process.env.PORT || 3000}`;
   const params = new URLSearchParams();
 
-  // Precedence: explicit start/end (from DateRangePicker) wins over quick scope.
+  // Precedence: explicit start/end query params win over quick scope.
   // If neither is set, fall back to whatever scope is in the URL — or all-time.
   if (sp.start || sp.end) {
     if (sp.start) params.set('start', sp.start);

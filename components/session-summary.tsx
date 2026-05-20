@@ -13,10 +13,6 @@ import {
   Wrench,
   User,
   Bot,
-  HelpCircle,
-  TrendingUp,
-  CheckCircle2,
-  ChevronRight,
   ArrowRight,
 } from 'lucide-react';
 import { cn, formatDuration, formatTokens, formatCost, parseDbDate } from '@/lib/utils';
@@ -24,7 +20,6 @@ import { getAgentColor, TOOL_COLORS } from '@/lib/colors';
 import { Skeleton } from '@/components/ui/skeleton';
 import type {
   SessionSummaryResponse,
-  SessionSummaryMoment,
   SessionSummaryParticipants,
   SessionSummaryHeader,
   SessionSummaryModelBreakdown,
@@ -43,197 +38,14 @@ const DISPLAY_USER_NAME =
 interface SessionSummaryProps {
   sessionId: string;
   /**
-   * 'panel' (default): rendered inline in the conversation view. Key moment clicks
-   *   call onScrollToEvent to scroll within the same page.
-   * 'page': rendered as a full dedicated page. Key moment rows are accordion-expanded
-   *   inline; no navigation on click.
+   * 'panel' (default): rendered inline in the conversation view. Per-prompt jump
+   *   icons call onScrollToEvent to scroll within the same page.
+   * 'page': rendered as a full dedicated page. Per-prompt jump icons link to
+   *   the conversation thread.
    */
   mode?: 'panel' | 'page';
-  /** panel mode only: called when user clicks an event anchor */
+  /** panel mode only: called when user clicks a per-prompt jump icon */
   onScrollToEvent?: (eventId: number) => void;
-}
-
-// ─── Moment icon + label map ─────────────────────────────────────────────────
-
-function momentIcon(type: SessionSummaryMoment['moment_type']) {
-  switch (type) {
-    case 'user_prompt':       return <User className="h-3.5 w-3.5 text-blue-400 flex-shrink-0" />;
-    case 'subagent_dispatch': return <Bot className="h-3.5 w-3.5 text-purple-400 flex-shrink-0" />;
-    case 'ask_user':          return <HelpCircle className="h-3.5 w-3.5 text-amber-400 flex-shrink-0" />;
-    case 'high_cost':         return <TrendingUp className="h-3.5 w-3.5 text-orange-400 flex-shrink-0" />;
-    case 'error':             return <AlertCircle className="h-3.5 w-3.5 text-red-400 flex-shrink-0" />;
-    case 'final_outcome':     return <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400 flex-shrink-0" />;
-  }
-}
-
-function momentLabel(m: SessionSummaryMoment): string {
-  switch (m.moment_type) {
-    case 'user_prompt':       return 'User prompt';
-    case 'subagent_dispatch': return m.agent_type ? `Spawned ${m.agent_type}` : 'Spawned subagent';
-    case 'ask_user':          return 'Question';
-    case 'high_cost':         return `High-cost turn${m.cost != null ? ` (${formatCost(m.cost)})` : ''}`;
-    case 'error':             return m.tool_name ? `Error in ${m.tool_name}` : 'Error';
-    case 'final_outcome':     return 'Done';
-  }
-}
-
-/** Actor label for a moment row. Returns "{name} ({role})" format. */
-function actorLabel(m: SessionSummaryMoment): string | null {
-  switch (m.moment_type) {
-    case 'user_prompt':
-      return `${DISPLAY_USER_NAME} (User)`;
-    case 'ask_user':
-    case 'subagent_dispatch': {
-      const name = m.agent_type && m.agent_type !== 'subagent' ? m.agent_type : 'Claude';
-      return `${name} (Agent)`;
-    }
-    case 'high_cost':
-    case 'final_outcome':
-    case 'error':
-      return 'Claude (Agent)';
-    default:
-      return null;
-  }
-}
-
-function momentBody(m: SessionSummaryMoment): string | null {
-  if (m.moment_type === 'user_prompt' && m.content_snippet) {
-    const snippet = m.content_snippet.replace(/\n+/g, ' ').trim();
-    return snippet.length > 120 ? snippet.slice(0, 120) + '…' : snippet;
-  }
-  if (m.moment_type === 'error' && m.error_message) {
-    const msg = m.error_message.trim();
-    return msg.length > 100 ? msg.slice(0, 100) + '…' : msg;
-  }
-  if (m.moment_type === 'ask_user' && m.content_snippet) {
-    try {
-      const parsed = JSON.parse(m.content_snippet);
-      const first = parsed?.questions?.[0]?.header ?? parsed?.question ?? null;
-      if (first) return String(first).slice(0, 100);
-    } catch {
-      // not valid JSON snippet — show raw
-    }
-    return m.content_snippet.slice(0, 100);
-  }
-  return null;
-}
-
-// ─── AskUserQuestion expanded content ────────────────────────────────────────
-
-interface AskUserExpandedProps {
-  contentSnippet: string | null;
-  answer: string | null;
-}
-
-function AskUserExpanded({ contentSnippet, answer }: AskUserExpandedProps) {
-  if (!contentSnippet) return null;
-
-  let parsed: {
-    questions?: Array<{
-      header?: string;
-      question?: string;
-      options?: Array<{ label?: string; description?: string }>;
-      multiSelect?: boolean;
-    }>;
-  } | null = null;
-
-  try {
-    parsed = JSON.parse(contentSnippet);
-  } catch {
-    // raw text fallback
-  }
-
-  if (!parsed?.questions?.length) {
-    // Fallback: raw snippet
-    return (
-      <div className="mt-2 space-y-2">
-        <p className="text-xs text-muted-foreground leading-relaxed">{contentSnippet.slice(0, 300)}</p>
-        {answer && (
-          <div className="rounded-md bg-blue-500/10 border border-blue-500/20 px-3 py-2 text-xs text-blue-300">
-            <span className="font-medium text-blue-400">{DISPLAY_USER_NAME} answered: </span>
-            {answer.slice(0, 200)}
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  // Normalize the answer text for matching
-  const normalizedAnswer = answer?.trim().toLowerCase() ?? '';
-
-  return (
-    <div className="mt-2 space-y-4">
-      {parsed.questions.map((q, qi) => {
-        const questionText = q.question ?? q.header ?? '';
-        const options = q.options ?? [];
-
-        // Try to match picked option(s) by label
-        const pickedLabels = options
-          .filter((opt) => {
-            const lbl = (opt.label ?? '').trim().toLowerCase();
-            return lbl && normalizedAnswer.includes(lbl);
-          })
-          .map((opt) => opt.label ?? '');
-
-        return (
-          <div key={qi} className="space-y-1.5">
-            {q.header && (
-              <p className="text-[10px] uppercase tracking-wider font-semibold text-muted-foreground">
-                {q.header}
-              </p>
-            )}
-            {questionText && (
-              <p className="text-xs font-medium text-foreground/80">{questionText}</p>
-            )}
-            {options.length > 0 && (
-              <div className="space-y-1">
-                {options.map((opt, oi) => {
-                  const isPicked = pickedLabels.includes(opt.label ?? '');
-                  return (
-                    <div
-                      key={oi}
-                      className={cn(
-                        'rounded-md px-3 py-2 text-xs transition-colors',
-                        isPicked
-                          ? 'bg-primary/15 border border-primary/30 text-foreground'
-                          : 'bg-muted/30 border border-border/40 text-muted-foreground'
-                      )}
-                    >
-                      <span
-                        className={cn(
-                          'font-medium',
-                          isPicked ? 'text-primary' : 'text-foreground/70'
-                        )}
-                      >
-                        {opt.label}
-                      </span>
-                      {isPicked && (
-                        <span className="ml-2 text-[10px] font-semibold text-primary/80 bg-primary/10 rounded px-1 py-0.5">
-                          picked
-                        </span>
-                      )}
-                      {opt.description && (
-                        <p className="mt-0.5 text-[11px] text-muted-foreground leading-snug">
-                          {opt.description}
-                        </p>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-            {/* If answer doesn't match any option, show raw answer as "Other" */}
-            {answer && pickedLabels.length === 0 && qi === 0 && (
-              <div className="rounded-md bg-muted/40 border border-border/50 px-3 py-2 text-xs">
-                <span className="font-medium text-foreground/70">{DISPLAY_USER_NAME} replied: </span>
-                <span className="text-muted-foreground">{answer.slice(0, 300)}</span>
-              </div>
-            )}
-          </div>
-        );
-      })}
-    </div>
-  );
 }
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
@@ -332,177 +144,11 @@ function SessionSummarySkeleton({ isPage }: { isPage: boolean }) {
   );
 }
 
-// ─── Key moment row ───────────────────────────────────────────────────────────
-
-interface MomentRowProps {
-  m: SessionSummaryMoment;
-  isLast: boolean;
-  isPage: boolean;
-  sessionId: string;
-  onScrollToEvent?: (eventId: number) => void;
-}
-
-function MomentRow({ m, isLast, isPage, sessionId, onScrollToEvent }: MomentRowProps) {
-  const [expanded, setExpanded] = useState(false);
-  const body = momentBody(m);
-  const isError = m.moment_type === 'error';
-  const actor = actorLabel(m);
-
-  // In page mode: accordion expand. No navigation.
-  // In panel mode: errors scroll via callback; all others are static.
-  const canScroll = !isPage && isError && m.event_id && onScrollToEvent;
-  // In panel mode with non-error moments that have an event_id: link to conversation
-  const canNavigatePanel = !isPage && !isError && m.event_id;
-
-  const timestamp = (() => {
-    try {
-      const d = parseDbDate(m.timestamp);
-      return isNaN(d.getTime())
-        ? m.timestamp
-        : d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
-    } catch {
-      return m.timestamp;
-    }
-  })();
-
-  const headerContent = (
-    <>
-      {/* Actor label */}
-      {actor && (
-        <p className="text-[10px] text-muted-foreground/60 font-medium mb-0.5">{actor}</p>
-      )}
-      <div className="flex items-baseline justify-between gap-2 flex-wrap">
-        <span
-          className={cn(
-            'text-[11px] font-medium',
-            m.moment_type === 'error' && 'text-red-400',
-            m.moment_type === 'high_cost' && 'text-orange-400',
-            m.moment_type === 'final_outcome' && 'text-emerald-400',
-            m.moment_type === 'subagent_dispatch' && 'text-purple-400',
-            m.moment_type === 'user_prompt' && 'text-blue-400',
-            m.moment_type === 'ask_user' && 'text-amber-400',
-          )}
-        >
-          {momentLabel(m)}
-        </span>
-        <time className="text-[10px] text-muted-foreground/60 font-mono flex-shrink-0">
-          {timestamp}
-        </time>
-      </div>
-      {body && (
-        <p className="text-[11px] text-muted-foreground leading-relaxed mt-0.5 break-words">
-          {body}
-        </p>
-      )}
-    </>
-  );
-
-  // Page mode: accordion row
-  if (isPage) {
-    const isExpandable =
-      m.moment_type === 'ask_user' ||
-      m.moment_type === 'user_prompt' ||
-      m.moment_type === 'error' ||
-      m.moment_type === 'subagent_dispatch';
-
-    return (
-      <li className="relative pl-6">
-        {!isLast && (
-          <span className="absolute left-[7px] top-4 bottom-0 w-px bg-border" />
-        )}
-        <span className="absolute left-0 top-1 flex items-center justify-center w-3.5 h-3.5 rounded-full bg-card border border-border">
-          {momentIcon(m.moment_type)}
-        </span>
-        <div className="pb-3 min-w-0">
-          {isExpandable ? (
-            <button
-              onClick={() => setExpanded((e) => !e)}
-              className="w-full text-left hover:opacity-80 transition-opacity focus:outline-none"
-              aria-expanded={expanded}
-            >
-              <div className="flex items-start gap-1">
-                <div className="flex-1 min-w-0">{headerContent}</div>
-                <span className="flex-shrink-0 mt-1 text-muted-foreground/40">
-                  {expanded
-                    ? <ChevronDown className="h-3 w-3" />
-                    : <ChevronRight className="h-3 w-3" />
-                  }
-                </span>
-              </div>
-            </button>
-          ) : (
-            headerContent
-          )}
-
-          {/* Expanded content */}
-          {expanded && (
-            <div className="mt-2 pl-0">
-              {m.moment_type === 'ask_user' && (
-                <AskUserExpanded
-                  contentSnippet={m.content_snippet}
-                  answer={m.ask_user_answer ?? null}
-                />
-              )}
-              {m.moment_type === 'user_prompt' && m.content_snippet && (
-                <p className="text-xs text-muted-foreground leading-relaxed bg-muted/30 rounded-md px-3 py-2 border border-border/40">
-                  {m.content_snippet}
-                </p>
-              )}
-              {m.moment_type === 'error' && m.error_message && (
-                <p className="text-xs text-red-400/80 leading-relaxed bg-red-500/5 rounded-md px-3 py-2 border border-red-500/20">
-                  {m.error_message}
-                </p>
-              )}
-              {m.moment_type === 'subagent_dispatch' && (
-                <p className="text-xs text-muted-foreground">
-                  Agent type: <span className="font-medium text-purple-400">{m.agent_type ?? m.agent_value ?? 'subagent'}</span>
-                </p>
-              )}
-            </div>
-          )}
-        </div>
-      </li>
-    );
-  }
-
-  // Panel mode
-  return (
-    <li className="relative pl-6">
-      {!isLast && (
-        <span className="absolute left-[7px] top-4 bottom-0 w-px bg-border" />
-      )}
-      <span className="absolute left-0 top-1 flex items-center justify-center w-3.5 h-3.5 rounded-full bg-card border border-border">
-        {momentIcon(m.moment_type)}
-      </span>
-
-      {canNavigatePanel ? (
-        <Link
-          href={`/conversations/${sessionId}#event-${m.event_id}`}
-          className="block pb-3 min-w-0 hover:opacity-80 transition-opacity"
-        >
-          {headerContent}
-        </Link>
-      ) : (
-        <div
-          className={cn(
-            'pb-3 min-w-0',
-            canScroll && 'cursor-pointer hover:opacity-80 transition-opacity'
-          )}
-          onClick={canScroll ? () => onScrollToEvent!(m.event_id) : undefined}
-        >
-          {headerContent}
-        </div>
-      )}
-    </li>
-  );
-}
-
 // ─── Shared body content ──────────────────────────────────────────────────────
 
 function SummaryBody({
   header,
   participants,
-  key_moments,
   model_breakdown,
   prompts,
   startedStr,
@@ -512,7 +158,6 @@ function SummaryBody({
 }: {
   header: SessionSummaryHeader;
   participants: SessionSummaryParticipants;
-  key_moments: SessionSummaryMoment[];
   model_breakdown: SessionSummaryModelBreakdown[];
   prompts: SessionSummaryPrompt[];
   startedStr: string;
@@ -832,12 +477,12 @@ export function SessionSummary({ sessionId, mode = 'panel', onScrollToEvent }: S
 
   if (!data) return null;
 
-  const { header, participants, key_moments, model_breakdown, prompts } = data;
+  const { header, participants, model_breakdown, prompts } = data;
 
   const hasNoActivity =
     header.turn_count === 0 &&
     header.total_tokens === 0 &&
-    key_moments.length === 0;
+    prompts.length === 0;
 
   const startedDate = parseDbDate(header.started_at);
   const startedStr = isNaN(startedDate.getTime())
@@ -862,7 +507,6 @@ export function SessionSummary({ sessionId, mode = 'panel', onScrollToEvent }: S
           <SummaryBody
             header={header}
             participants={participants}
-            key_moments={key_moments}
             model_breakdown={model_breakdown}
             prompts={prompts}
             startedStr={startedStr}
@@ -902,8 +546,7 @@ export function SessionSummary({ sessionId, mode = 'panel', onScrollToEvent }: S
             <SummaryBody
               header={header}
               participants={participants}
-              key_moments={key_moments}
-              model_breakdown={model_breakdown}
+                model_breakdown={model_breakdown}
               prompts={prompts}
               startedStr={startedStr}
               sessionId={sessionId}

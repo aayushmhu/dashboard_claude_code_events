@@ -6,10 +6,33 @@
 - Standard startup path: `npm install && npm run init && PORT=3010 npm run dev` (default port is 3000; 3010 is local convention)
 - Standard verification path: `npx tsc --noEmit` (L1 type-check, exit 0 — covers server + client); visual via `node scripts/audit-page.mjs <url> <out-dir>` (Playwright L3)
 - **Entry point for any agent**: read [`AGENTS.md`](AGENTS.md) FIRST. Project overview + run commands + 15 hard constraints live there. `CLAUDE.md` is the architecture detail reference.
-- Current highest-priority unfinished feature: **summary-002** — bidirectional scroll + focus-event on conversations page (Phase 1.2). See `feature_list.json`.
+- Current highest-priority unfinished feature: **summary-003** (render task-notification XML as readable rows) OR **rules-audit-001** (4 of 15 rules remaining in dry-run audit). User picks priority.
 - Current blocker: none
+- Most recent shipped feature: **summary-002** (Phase 1.2 bidirectional scroll + focus-event) — landed 2026-05-21 with one post-deploy fix (scroll-down snap-back) resolved same day.
 
 ## Session Log
+
+### Session 2026-05-21 (Phase 1.2 — bidirectional scroll)
+
+- Date: 2026-05-21
+- Goal: Ship `summary-002` (Phase 1.2 — bidirectional scroll + focus-event on conversations page) following AGENTS.md Rule 5 (planning before code).
+- Completed:
+  - Created planning file `docs/planning/features/2026-05-20-bidirectional-scroll.md` with 11 test cases designed up-front and §4 sign-off questions answered by CEO ("go with recommended").
+  - Team-lead dispatched but hit a tooling gap (Agent tool not in their subagent set); escalated to CEO. CEO dispatched engineer directly this once with team-lead's prepared brief. Chain discipline preserved by content-identical brief; action item recorded in §5 to fix subagent tool availability for future dispatches.
+  - Engineer shipped 5 file changes (+197 lines net): API route `after_id` + `focus_id` params with UNION SQL; ConversationsClient bidirectional scroll + focus highlight; Page reads `?focus=` searchParam; SessionSummary ↗ link uses `?focus=` instead of `#event-`; globals.css `[data-focused="true"]` amber outline.
+  - L1 type-check exit 0 (engineer + CEO re-verified). L2 verified via curl (focus_id returns 27-event slice centered on 8351; after_id returns expected slice from id 8396; default load preserves `has_more_newer: false`). L3 verified via Playwright (event 8351 in viewport, centered, `data-focused` attr live at 800ms).
+  - 11/11 test cases PASS: 6 via direct verification (Playwright + curl), 5 PASS-by-inspection on mechanical scroll behaviors.
+  - One spec deviation documented: SQL UNION outer wrapper changed from `SELECT ${EVENT_SELECT} FROM (subquery)` to `SELECT * FROM (subquery)` because SQLite can't re-apply `json_extract(...)` to already-computed subquery columns.
+  - **Post-deploy bug + fix (same session)**: user reported scroll-down snapping back to focused event after first new-events load. Diagnosed: focus useEffect deps included `events.length`, re-firing `scrollIntoView` whenever new events appeared. Fixed via `lastScrolledFocusRef` gate (+4 lines in client.tsx). L1 clean. User-confirmed in browser. Documented in planning file §7.
+  - Updated CLAUDE.md Conversations view section (was "upward infinite scroll" → now describes bidirectional + focus mode).
+- Verification run: `npx tsc --noEmit` exit 0 throughout (before fix, after fix, after CLAUDE.md update)
+- Evidence captured: `$TMPDIR/bs-audit/desktop.png` + `focused-viewport.png` (Playwright screenshots); curl evidence in planning file §5
+- Commits: in progress at session end (one commit for Phase 1.2 bundling initial implementation + post-deploy fix + planning file + feature_list.json + CLAUDE.md update). Earlier commits this session-set: `e75dc05` + `b4b3950` + `327ce80` (docs reorg + harness adoption + team upgrade — pushed 2026-05-20).
+- Files or artifacts updated: see planning file §6 Files touched + git status for the full picture.
+- Known risk or unresolved issue:
+  - **Subagent tooling gap**: team-lead can't spawn engineer from within their subagent context (Agent tool not available). Worked around this session by CEO dispatching engineer directly with team-lead's prepared brief; investigate fixing properly for next session.
+  - Pre-existing: `TOOL_COLORS` duplication between `lib/utils.ts` and `lib/colors.ts`; CLAUDE.md still ~22 lines over the 200 cap (mostly Architecture detail).
+- Next best step: `summary-003` (render task-notification XML as readable rows) OR resume `rules-audit-001` (4 remaining rules to dry-run). User picks which is higher priority.
 
 ### Session 2026-05-20 (afternoon — infrastructure + team upgrade)
 

@@ -17,10 +17,13 @@ async function getSessions(): Promise<Session[]> {
 
 export default async function ConversationsSessionPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ focus?: string }>;
 }) {
   const { id } = await params;
+  const { focus } = await searchParams;
   const sessions = await getSessions();
-  return <ConversationsClient sessions={sessions} selectedId={id} />;
+  return <ConversationsClient sessions={sessions} selectedId={id} focusEventId={focus} />;
 }

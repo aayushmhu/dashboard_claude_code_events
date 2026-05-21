@@ -95,7 +95,8 @@ In SQL, use the per-model `COST_EXPR` `CASE` pattern (see `app/api/projects/deta
 
 **Conversations view** (`/conversations`):
 - Path-based routing: `/conversations/[id]` — session ID in path, not query param
-- Upward infinite scroll via `before_id` pagination (50 events/page)
+- **Bidirectional infinite scroll** via `before_id` / `after_id` pagination (50 events/page each direction)
+- **Focus mode**: `?focus=<event_id>` URL param loads a 50-event slice centered on that event (25 before + 25 after) and applies an amber outline highlight for 2s via the `[data-focused="true"]` attribute. Used by the Session Summary `↗` jump icon.
 - Two tabs in the right pane: **Conversation** (raw event thread) and **Summary** (panel-mode `SessionSummary` with Prompts list)
 - "Ask Claude" button navigates to `/chat/[id]` with session pre-loaded as context
 - "Export" button downloads self-contained HTML via `/api/sessions/[id]/export`

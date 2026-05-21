@@ -140,3 +140,10 @@ html {
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
 }
+
+/* Focus-event highlight (bidirectional scroll feature) */
+[data-focused="true"] {
+  outline: 2px solid rgb(245 158 11 / 0.6);
+  outline-offset: 4px;
+  transition: outline-color 2000ms ease-out;
+}

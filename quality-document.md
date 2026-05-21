@@ -20,7 +20,7 @@ A quality snapshot for each product domain and architectural layer. Both agents 
 | Dashboard (/) | B | Manual visual; no automated tests | Good — clear component split | Stable | No automated test coverage. Stat cards / charts could drift if SQL changes silently. | 2026-05-20 |
 | Projects + Project Detail | A | Manual visual + Playwright screenshots | Good — components extracted (CostMixRow, Pagination, CostByModel, CostTimeline) | Stable post-Phase 8 rebuild | None known. | 2026-05-20 |
 | Sessions | B | Manual | Good | Stable | `showSessionId` prop is dual-purpose; could simplify if more views appear. | 2026-05-20 |
-| Conversations replay | B | Manual | Good | Upward infinite scroll works | **Bidirectional scroll not yet implemented** — jump-to-event from Summary silently fails on old events. Tracked as `summary-002`. | 2026-05-20 |
+| Conversations replay | A | Manual + Playwright (focus mode) | Good | Bidirectional infinite scroll + focus-event (`?focus=<id>`) shipped 2026-05-21 (summary-002) | None known. | 2026-05-21 |
 | Session Summary (panel + page) | A | Type-check + Playwright on audit session | Excellent — Phase 1 cleanup left 561 lines of focused code | Stable | None — dead "moments" code removed in commit `89a0131`. | 2026-05-20 |
 | Chat (interactive) | C | Manual; experimental flagged in UI | Mixed — Monaco editor + streaming logic; complex | Functional but called *Experimental* in the page list | AskUserQuestion tool calls don't surface as interactive prompts; queued. | 2026-05-20 |
 | Tools analytics | B | Manual | Good | Stable | Per-tool detail page (`/tools/[name]`) could share more components with `/tools`. | 2026-05-20 |
@@ -65,6 +65,16 @@ A quality snapshot for each product domain and architectural layer. Both agents 
   - Broken file refs across agent prompts → all 11 instances converted to backtick notation.
   - Absolute `/Users/aayushsaini/...` paths in docs → all replaced with `~` or relative paths; Rule 15 prevents recurrence.
   - Orphaned legacy agents (`ui-designer.md`, `product-manager.md`) → deleted.
+
+### 2026-05-21 — Phase 1.2 bidirectional scroll shipped
+
+- Changes: summary-002 shipped. New API params (`after_id`, `focus_id`), bidirectional scroll handler in conversations client, focus highlight via `[data-focused]` attribute, `↗` link from Session Summary now uses `?focus=`. One post-deploy fix landed same day (scroll-down snap-back via `lastScrolledFocusRef` gate, user-confirmed).
+- Domains promoted: **Conversations replay B → A** (jump-to-event from Summary now works for any event, not just the latest 50; bidirectional scroll keeps memory of focus without snapping back).
+- Demoted: none.
+- New gaps identified: **Subagent dispatch tooling gap** — team-lead can't spawn engineer (Agent tool missing from subagent context). Worked around this session by CEO direct-dispatch. Needs proper fix.
+- Gaps closed:
+  - Bidirectional scroll on conversations (was `summary-002` gap on 2026-05-20).
+  - Jump-from-Summary silently failing on far-back events.
 
 ### YYYY-MM-DD
 

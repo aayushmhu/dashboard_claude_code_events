@@ -310,7 +310,7 @@ function PromptRow({
       )
     : (
         <Link
-          href={`/conversations/${sessionId}#event-${prompt.prompt_id}`}
+          href={`/conversations/${sessionId}?focus=${prompt.prompt_id}`}
           className="flex-shrink-0"
           aria-label="Jump to this prompt in conversation"
         >

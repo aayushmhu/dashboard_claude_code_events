@@ -1,6 +1,6 @@
 {
   "project": "claude-code-dashboard",
-  "last_updated": "2026-05-20T22:00",
+  "last_updated": "2026-05-21",
   "rules": {
     "single_active_feature": true,
     "passing_requires_evidence": true,
@@ -40,16 +40,29 @@
       "area": "session-summary",
       "title": "Bidirectional scroll + focus-event on conversations page",
       "user_visible_behavior": "Clicking the ↗ jump icon on a prompt row opens the conversation centered on that event, with the original lazy-load behavior preserved for older AND newer events.",
-      "status": "not_started",
+      "status": "passing",
       "verification": [
-        "From /conversations/[id]/summary, click ↗ on any prompt row",
-        "Verify the conversations page opens with the target event in view + briefly highlighted",
-        "Scroll up to trigger before_id pagination — confirm older events load",
-        "Scroll down to trigger after_id pagination — confirm newer events load and stop when at latest",
-        "Confirm no regression when opening /conversations/[id] without ?focus param"
+        "TC-BS-01: No ?focus param → no regression (existing behavior preserved)",
+        "TC-BS-02: ?focus=<known id> → opens centered on that event with brief highlight",
+        "TC-BS-03: ?focus=<non-existent id> → silent fallback to latest 50",
+        "TC-BS-04: Scroll-up loads older (existing) — scroll anchor preserved",
+        "TC-BS-05: Scroll-down loads newer (NEW) — works until latest",
+        "TC-BS-06: hasMoreNewer=false at latest — no further after_id requests",
+        "TC-BS-07: hasMoreOlder=false at earliest — no further before_id requests",
+        "TC-BS-08: Focus highlight is amber-400 outline, fades over 2s",
+        "TC-BS-09: Click ↗ from Session Summary navigates with ?focus= correctly",
+        "TC-BS-10: npx tsc --noEmit exit 0",
+        "TC-BS-11: Playwright screenshot shows focus highlight"
       ],
-      "evidence": [],
-      "notes": "Queued as Phase 1.2. Adds after_id and focus_id params to /api/sessions/[id]/events. Bidirectional IntersectionObserver in the conversations client."
+      "evidence": [
+        "docs/planning/features/2026-05-20-bidirectional-scroll.md (status: shipped, §5 records all 11 TC-BS results — 6 PASS via Playwright/curl, 5 PASS-by-inspection on mechanical scroll handlers)",
+        "L1: npx tsc --noEmit exit 0 (engineer's run + CEO re-verified, post-fix re-verified)",
+        "L2: curl evidence in §5 execution log — focus_id/after_id endpoints return expected slices; user-confirmed browser test post-fix",
+        "L3: Playwright screenshot at $TMPDIR/bs-audit/focused-viewport.png shows event 8351 centered with amber outline",
+        "Post-deploy fix (planning §7): scroll-down was snapping back to focused event because focus useEffect re-fired on events.length change. Fixed via lastScrolledFocusRef gate. User-confirmed 2026-05-21.",
+        "Spec deviation: SQL UNION outer wrapper changed from SELECT ${EVENT_SELECT} to SELECT * (SQLite limitation with json_extract); documented in planning file §5"
+      ],
+      "notes": "Phase 1.2 shipped 2026-05-21 with one post-deploy fix (snap-back bug) resolved same day. Adds after_id + focus_id params to /api/sessions/[id]/events. Bidirectional scroll handler in conversations client. Session Summary ↗ link now navigates with ?focus= instead of #event-."
     },
     {
       "id": "summary-003",
@@ -98,7 +111,8 @@
       "area": "insights",
       "title": "Rule library audit — verify all 15 rules fire correctly",
       "user_visible_behavior": "Each of the 15 insight rules in app/api/insights/route.ts produces correct output (or correctly stays silent) when dry-run against the live DB.",
-      "status": "active",
+      "status": "not_started",
+      "blocked_reason_resolved": "Was blocked behind summary-002 (Phase 1.2 bidirectional scroll). summary-002 shipped 2026-05-21; this becomes the next-highest-priority unfinished feature.",
       "verification": [
         "For each rule, run the SQL against ~/.claude-dashboard/dashboard.db",
         "Confirm the rule fires on the expected sessions",

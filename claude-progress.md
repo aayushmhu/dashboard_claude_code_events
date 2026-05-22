@@ -8,9 +8,48 @@
 - **Entry point for any agent**: read [`AGENTS.md`](AGENTS.md) FIRST. Project overview + run commands + 15 hard constraints live there. `CLAUDE.md` is the architecture detail reference.
 - Current highest-priority unfinished feature: **summary-003** (render task-notification XML as readable rows) OR **rules-audit-001** (4 of 15 rules remaining in dry-run audit). User picks priority.
 - Current blocker: none
-- Most recent shipped feature: **summary-002** (Phase 1.2 bidirectional scroll + focus-event) — landed 2026-05-21 with one post-deploy fix (scroll-down snap-back) resolved same day.
+- Most recent shipped feature: **local-files-001** (surface local Claude Code files on Project Detail — inline section + dedicated `/projects/detail/local` page + memory-preview modal + `/chat?root=` extension + 9 polish iterations) — landed 2026-05-21 / 2026-05-22.
 
 ## Session Log
+
+### Session 2026-05-22 (local-files-001 polish iterations 6–9 + ship)
+
+- Date: 2026-05-22
+- Goal: Polish + ship `local-files-001` after 5 iterations on 2026-05-21.
+- Completed:
+  - Iteration 6: Bumped chat file-preview cap from 512 KB → 5 MB (`app/api/chat/filecontent/route.ts`) so memory files and most transcripts (`.jsonl`) preview cleanly in Monaco
+  - Iteration 7: Right-click on any file in the chat file explorer shows "Download file" option. Engineer chose to extend the existing context menu portal instead of building a parallel one (good call). Uses `/api/chat/fileraw` + client-side blob trick
+  - Iteration 8: Memory file markdown links 404'd on click — fixed in both the inline teaser (`local-files-section.tsx`, navigates to dedicated page with `?open=<file>`) and the modal popup (`memory-preview-modal.tsx`, swaps content in-place via `onSwitchFile` callback). Dedicated page reads `?open=` searchParam to auto-open the modal
+  - Iteration 9: Same 404 issue in chat's Monaco Preview mode — extended `MdContent` to accept an `onMarkdownLink` callback that resolves relative `.md` paths against the open file's directory + opens in Monaco via existing `openFileContent`. Module-level `mdComponents` left untouched so chat-message rendering is unaffected
+  - Production build `npm run build` clean — all routes compiled, no errors. New routes visible: `/api/projects/local-files`, `/api/projects/local-files/memory`, `/projects/detail/local`
+- Verification: `npx tsc --noEmit` exit 0 after each iteration; final `npm run build` clean
+- Evidence: planning file §7 records all 9 post-deploy iterations with diagnosis + fix + line deltas; Playwright screenshots at `$TMPDIR/{lf-audit,lf-design-audit,lf-chat-locked-final,lf-fullwidth,...}/`
+- Commits: pending CEO commit at end of this session (one big bundle: initial ship + 9 polish iterations)
+- Files or artifacts updated: see planning file §6 Files touched + git status (16 files)
+- Known risk or unresolved issue:
+  - Pre-existing: `TOOL_COLORS` duplication between `lib/utils.ts` and `lib/colors.ts`; CLAUDE.md still ~25 lines over 200-line cap (Architecture/Pages/API sections); subagent dispatch tooling gap (CEO continues to direct-dispatch engineer)
+- Next best step: `summary-003` (task-notification XML rendering) or `rules-audit-001` (4 remaining rule dry-runs). User picks.
+
+### Session 2026-05-21 (local-files-001 — surface local Claude Code files)
+
+- Date: 2026-05-21
+- Goal: Ship `local-files-001` (new section on Project Detail showing local memory + transcripts + buttons to open in chat editor / view full details).
+- Completed:
+  - Created planning file `docs/planning/features/2026-05-21-project-detail-local-files.md` with 18 test cases. Three iterations on scope before sign-off (added memory content viewing → added full-details page + open-in-editor → swapped shell-exec for in-app `/chat?root=` + Radix Dialog modal). CEO signed off all 7 §4 decisions with defaults.
+  - Engineer shipped 7 new files + 4 modifications + 1 dep: 2 API endpoints (`/api/projects/local-files`, `/api/projects/local-files/memory`), 1 inline section (`local-files-section.tsx`), 1 dedicated page route (`/projects/detail/local`), 1 modal component (`memory-preview-modal.tsx`), 1 shared Dialog primitive (`components/ui/dialog.tsx`), and a small `/chat?root=` extension. `@radix-ui/react-dialog ^1.1.15` added.
+  - L1 type-check exit 0. L2 verified via curl on both endpoints + page loads. L3 via Playwright (3 of 4 screenshots; modal-open screenshot missing because Chrome headless CLI can't click — modal verified by code review).
+  - 11 test cases PASS via direct verification, 7 PASS-by-inspection (size cap, empty state, safe fallback for chat `?root=`).
+  - **Two spec deviations** recorded in planning §5: (1) slug algorithm — planning said `replace(/\//g, '-')` but Claude Code's actual slug is `replace(/[^a-zA-Z0-9]/g, '-')`; engineer hit 404 at L2, investigated, fixed. (2) Added `claude_folder_path_full` to API response alongside tilde-form path; non-breaking.
+  - Updated CLAUDE.md per Rule 2 audit checklist: Pages table (added `/projects/detail/local`), API routes (added `projects/local-files` + `projects/local-files/memory`), Chat note (mentions `?root=` scoped extension), Shared Components (added `components/ui/dialog.tsx`).
+  - All harness artifacts updated (this file, session-handoff.md, quality-document.md).
+- Verification run: `npx tsc --noEmit` exit 0 throughout (multiple runs)
+- Evidence captured: `$TMPDIR/lf-audit/project-detail-full.png` + `local-files-desktop.png` + `chat-root-desktop.png`
+- Commits: pending (one commit for the full feature bundle including code + docs)
+- Files or artifacts updated: see planning file §6 Files touched + git status
+- Known risk or unresolved issue:
+  - **Subagent dispatch tooling gap persists**: CEO dispatched engineer directly (same pattern as Phase 1.2 sessions). Action item still standing.
+  - Pre-existing: `TOOL_COLORS` duplication; CLAUDE.md ~22 lines over the 200 cap.
+- Next best step: `summary-003` (task-notification XML rendering) OR `rules-audit-001` (4 remaining rule dry-runs). User picks.
 
 ### Session 2026-05-21 (Phase 1.2 — bidirectional scroll)
 

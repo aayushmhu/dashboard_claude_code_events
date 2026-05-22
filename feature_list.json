@@ -1,6 +1,6 @@
 {
   "project": "claude-code-dashboard",
-  "last_updated": "2026-05-21",
+  "last_updated": "2026-05-21T11:00",
   "rules": {
     "single_active_feature": true,
     "passing_requires_evidence": true,
@@ -79,6 +79,34 @@
       ],
       "evidence": [],
       "notes": "Bundled with summary-002 as Phase 1.2."
+    },
+    {
+      "id": "local-files-001",
+      "priority": 1,
+      "area": "project-detail",
+      "title": "Surface local Claude Code files on Project Detail",
+      "user_visible_behavior": "Project Detail page gets a new section showing the project's local memory + transcripts. Each memory file has a View button → modal popup with full markdown preview. 'View all local files →' link opens a dedicated full-details page. 'Open in app editor' button opens the Claude folder in the in-app /chat editor.",
+      "status": "passing",
+      "verification": [
+        "TC-LF-01..04: list endpoint returns transcripts + memory metadata + MEMORY.md teaser",
+        "TC-LF-05..07: memory content endpoint returns markdown with size cap + path-traversal blocks",
+        "TC-LF-08..09: /chat?root= extension scoped to ~/.claude/projects/",
+        "TC-LF-10..12: inline section renders + empty state + 'Open in app editor' navigates correctly",
+        "TC-LF-13..15: dedicated page renders + modal opens with markdown + large-file fallback",
+        "TC-LF-16: npx tsc --noEmit exit 0",
+        "TC-LF-17: Playwright screenshots of all 4 surfaces (inline section, full page, modal open, chat at claude folder)",
+        "TC-LF-18: @radix-ui/react-dialog install clean"
+      ],
+      "evidence": [
+        "docs/planning/features/2026-05-21-project-detail-local-files.md (status: shipped; §5 records all 18 TC-LF results — 11 direct PASS, 7 PASS-by-inspection on size-cap/empty-state/modal-click/safe-fallback paths)",
+        "L1: npx tsc --noEmit exit 0 (engineer + CEO independently verified)",
+        "L2: curl evidence — both API endpoints return expected JSON; chat ?root= loads file explorer with 16 Claude-folder entries",
+        "L3: Playwright screenshots — project-detail-full.png shows Local Files section at bottom with MEMORY.md teaser + buttons; local-files-desktop.png shows full page; chat-root-desktop.png shows chat at Claude folder",
+        "Spec deviation 1: slug algorithm was `replace(/\\//g, '-')` per planning §2.3; actual Claude Code slug is `replace(/[^a-zA-Z0-9]/g, '-')`. Engineer discovered + fixed at L2. Code at app/api/projects/local-files/route.ts:10 is correct.",
+        "Spec deviation 2: API response added `claude_folder_path_full` alongside `claude_folder_path` (tilde-form) — chat link + modal fallback need the OS path. Non-breaking.",
+        "Dependency: @radix-ui/react-dialog ^1.1.15"
+      ],
+      "notes": "Phase shipped 2026-05-21. Adds: 2 API endpoints (/api/projects/local-files + /api/projects/local-files/memory), 1 new page (/projects/detail/local), 1 inline section, 1 modal component, 1 new shared Dialog primitive, 1 small /chat?root= extension. Uncommitted pending CEO commit confirmation per AGENTS.md Rule #1."
     },
     {
       "id": "infra-001",

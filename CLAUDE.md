@@ -40,7 +40,8 @@
 |---|---|
 | `/` | Dashboard — stat cards, token summary strip, activity timeline, tool usage chart, recent sessions, agent donut |
 | `/projects` | Card grid per `project_dir` |
-| `/projects/detail` | Per-project drilldown — header stats, cost timeline, cost by model, sessions, top tools + agents used (side-by-side), errors |
+| `/projects/detail` | Per-project drilldown — header stats, cost timeline, cost by model, sessions, top tools + agents used (side-by-side), errors, local files (MEMORY.md teaser + buttons) |
+| `/projects/detail/local` | Full local-files view — memory list with click-to-View modal, transcripts table with `tracked_in_db` badge, subagent dirs |
 | `/sessions` | Paginated table with project/date/error filters |
 | `/conversations` | Read-only chat replay — session sidebar + scrollable event thread, load-older scroll, HTML export, Ask Claude button. Has both a Conversation tab (raw thread) and a Summary tab (panel). |
 | `/conversations/[id]/summary` | Dedicated full-page session summary (header stats + Prompts list with response excerpts) |
@@ -52,12 +53,12 @@
 
 **API routes** (`app/api/`):
 - Stats/charts: `stats`, `events/timeline`, `activity/heatmap`, `tokens`, `tokens/timeline`
-- Projects: `projects`, `projects/detail`
+- Projects: `projects`, `projects/detail`, `projects/local-files`, `projects/local-files/memory`
 - Sessions: `sessions`, `sessions/[id]`, `sessions/[id]/events`, `sessions/[id]/transcript`, `sessions/[id]/export`, `sessions/[id]/summary`
 - Tools: `tools`, `tools/[name]`
 - Errors / agents / insights: `errors`, `agents`, `insights`
 - Settings: `settings`
-- Chat (interactive): `chat/stream`, `chat/respond`, `chat/directories`, `chat/filetree`, `chat/filecontent`, `chat/fileraw`, `chat/filesearch`, `chat/browse`, `chat/fileops`, `chat/saveimage`
+- Chat (interactive): `chat/stream`, `chat/respond`, `chat/directories`, `chat/filetree`, `chat/filecontent`, `chat/fileraw`, `chat/filesearch`, `chat/browse`, `chat/fileops`, `chat/saveimage`. Accepts `?root=<path>` query param at `/chat` — scoped to paths inside `~/.claude/projects/` only; ignored otherwise.
 
 ## Key Implementation Details
 
@@ -152,6 +153,7 @@ Most components are page-local; these are the cross-page primitives:
 - `components/stat-card.tsx`, `components/header.tsx`, `components/sidebar.tsx` — layout primitives
 - `components/budget-panel.tsx`, `components/recommendations-section.tsx` — dashboard cards
 - `components/session-view-shell.tsx` — Conversation/Summary tab shell for `/conversations/[id]`
+- `components/ui/dialog.tsx` — shadcn-style Radix Dialog wrapper. Used by the memory-preview modal in `/projects/detail/local`; reusable for any future modal.
 
 ## Agent team (`.claude/agents/`)
 

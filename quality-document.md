@@ -76,6 +76,22 @@ A quality snapshot for each product domain and architectural layer. Both agents 
   - Bidirectional scroll on conversations (was `summary-002` gap on 2026-05-20).
   - Jump-from-Summary silently failing on far-back events.
 
+### 2026-05-21 — Local files surface shipped (local-files-001)
+
+- Changes: Project Detail page gets a new Local Files section at the bottom (MEMORY.md teaser + buttons). New dedicated page at `/projects/detail/local`. New memory-preview modal. New shared Dialog primitive (`components/ui/dialog.tsx`) usable for any future modal. `/chat` accepts `?root=<path>` query param scoped to `~/.claude/projects/`. Two new API endpoints. One new dep (`@radix-ui/react-dialog`).
+- Domains promoted: Project Detail **stays A** (gains a new section but no architectural shift). Insights/rule library **stays B** (no change). UI primitives layer: gains its first modal primitive — A.
+- Demoted: none.
+- New gaps identified: none.
+- Gaps closed: "the dashboard doesn't surface project memory" — was a long-standing user ask. Now visible inline + click-to-view modal + full-page view.
+
+### 2026-05-22 — local-files-001 polish iterations 6–9 + ship
+
+- Changes: 4 more post-deploy iterations on the local-files feature: 5 MB filecontent cap, right-click Download menu item, memory markdown links open in modal (no 404), chat Monaco Preview markdown links resolve to actual files (no 404). Production build verified clean.
+- Domains promoted: Project Detail layer stays A (gains polish without scope creep). Chat editor capability gains: right-click context menu shipped; markdown preview link resolution added.
+- Demoted: none.
+- New gaps identified: none.
+- Gaps closed: 404 on markdown links across all 3 render surfaces (inline teaser, modal popup, chat Monaco Preview).
+
 ### YYYY-MM-DD
 
 - Changes:

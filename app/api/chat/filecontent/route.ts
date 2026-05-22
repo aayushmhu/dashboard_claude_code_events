@@ -3,7 +3,7 @@ import { readFile, writeFile, stat } from 'fs/promises';
 import { existsSync } from 'fs';
 import { extname } from 'path';
 
-const MAX_SIZE = 512 * 1024; // 512 KB
+const MAX_SIZE = 5 * 1024 * 1024; // 5 MB — covers all memory files and typical transcripts; Monaco handles this fine
 
 const PDF_EXTS  = new Set(['.pdf']);
 const IMG_EXTS  = new Set(['.png', '.jpg', '.jpeg', '.gif', '.svg', '.webp', '.ico', '.bmp']);

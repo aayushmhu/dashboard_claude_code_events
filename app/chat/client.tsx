@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo, memo } from 'react';
 import { createPortal } from 'react-dom';
+import Link from 'next/link';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import { useRouter } from 'next/navigation';
 import ReactMarkdown from 'react-markdown';
@@ -15,7 +16,7 @@ import {
   Copy, Check, AlertTriangle, ChevronDown, ChevronRight, BellRing,
   RefreshCw, AlertCircle, Clock, Coins, Settings,
   File, FileText, FileCode, X, Pencil, FilePlus, FolderPlus,
-  Eye, ImageIcon, AtSign, Slash, Paperclip,
+  Eye, ImageIcon, AtSign, Slash, Paperclip, Download,
   Crown, ShieldCheck, FlaskConical, Server, Layout, Cloud, Database, Lock, PauseCircle,
   Brain, GitBranch, Shield, ZoomIn, HelpCircle,
 } from 'lucide-react';
@@ -1484,7 +1485,25 @@ const mdComponents: Record<string, (props: any) => React.ReactElement | null> = 
   a: ({ href, children }) => <a href={href} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">{children}</a>,
 };
 
-function MdContent({ content }: { content: string }) {
+function MdContent({ content, onMarkdownLink }: { content: string; onMarkdownLink?: (href: string) => void }) {
+  const componentsToUse = onMarkdownLink ? {
+    ...mdComponents,
+    a: ({ href, children }: { href?: string; children?: React.ReactNode }) => {
+      if (!href || href.startsWith('http://') || href.startsWith('https://')) {
+        return <a href={href} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">{children}</a>;
+      }
+      return (
+        <button
+          type="button"
+          onClick={(e) => { e.preventDefault(); onMarkdownLink(href); }}
+          className="text-primary hover:underline"
+        >
+          {children}
+        </button>
+      );
+    },
+  } : mdComponents;
+
   return (
     <div className="px-8 py-6 h-full overflow-auto" style={{ background: '#1e1e1e', color: '#d4d4d4' }}>
       <div style={{ maxWidth: 860, margin: '0 auto', fontFamily: "'Segoe WPC', 'Segoe UI', sans-serif", fontSize: 14, lineHeight: 1.7 }}>
@@ -1502,7 +1521,7 @@ function MdContent({ content }: { content: string }) {
           .md-body img { max-width: 100%; }
         `}</style>
         <div className="md-body">
-          <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>{content}</ReactMarkdown>
+          <ReactMarkdown remarkPlugins={[remarkGfm]} components={componentsToUse}>{content}</ReactMarkdown>
         </div>
       </div>
     </div>
@@ -1631,9 +1650,13 @@ function TabContextMenuPortal(props: TabContextMenuPortalProps) {
 export function ChatClient({
   initialSessions,
   initialSessionId,
+  initialRoot,
+  initialFrom,
 }: {
   initialSessions: Session[];
   initialSessionId?: string;
+  initialRoot?: string;
+  initialFrom?: string;
 }) {
   const router = useRouter();
 
@@ -1712,7 +1735,15 @@ export function ChatClient({
   // Settings
   const [showSettings, setShowSettings] = useState(false);
   const [mobileExplorerOpen, setMobileExplorerOpen] = useState(false);
-  const [selectedDirectory, setSelectedDirectory] = useState('');
+  // Honor ?root= only when it's strictly inside ~/.claude/projects/
+  const safeInitialRoot = ((): string => {
+    if (!initialRoot) return '';
+    // Belt-and-suspenders client check: path must contain /.claude/projects/
+    // The full OS path is passed (not tilde-form) from local-files-section/local-files-client.
+    if (!initialRoot.includes('/.claude/projects/')) return '';
+    return initialRoot;
+  })();
+  const [selectedDirectory, setSelectedDirectory] = useState(safeInitialRoot);
   const [showCustomInput, setShowCustomInput] = useState(false);
   const [customDir, setCustomDir] = useState('');
   const [permissionMode, setPermissionMode] = useState<'default' | 'acceptEdits' | 'dangerouslySkipPermissions'>('default');
@@ -1789,6 +1820,8 @@ export function ChatClient({
   const atPositionRef = useRef<number | null>(null);
   const fileSearchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastUserMsgRef = useRef<{ text: string; imgs: Array<{ dataUrl: string; mimeType: string }>; files: Array<{ path: string; relPath: string }> } | null>(null);
+  // Auto-open MEMORY.md once when ?root= is set (root-locked file-viewer mode)
+  const didAutoOpenMemoryRef = useRef(false);
 
   const effectiveDir = showCustomInput ? customDir : selectedDirectory;
   const activeSession = sessions.find(s => s.session_id === currentSessionId);
@@ -2093,6 +2126,27 @@ export function ChatClient({
     }, 50);
   }, [activeTabPath]);
 
+  const downloadFile = useCallback(async (path: string, name: string) => {
+    try {
+      const res = await fetch(`/api/chat/fileraw?path=${encodeURIComponent(path)}`);
+      if (!res.ok) {
+        console.error('Download failed:', res.status);
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Download error:', err);
+    }
+  }, []);
+
   const openFileContent = useCallback(async (path: string) => {
     const isNotebook = path.endsWith('.ipynb');
     // Already open → just activate it
@@ -2118,6 +2172,17 @@ export function ChatClient({
       setFileLoading(false);
     }
   }, [openTabs]);
+
+  // Auto-open MEMORY.md on first load when root-locked (?root= mode)
+  useEffect(() => {
+    if (!safeInitialRoot) return;
+    if (didAutoOpenMemoryRef.current) return;
+    didAutoOpenMemoryRef.current = true;
+    const memoryPath = `${safeInitialRoot}/memory/MEMORY.md`;
+    openFileContent(memoryPath).catch(() => {
+      // Silent — MEMORY.md doesn't exist for this project; fallback empty state will show
+    });
+  }, [safeInitialRoot, openFileContent]);
 
   const saveFile = useCallback(async () => {
     if (!openFile || saving) return;
@@ -3214,26 +3279,50 @@ export function ChatClient({
           </button>
         </div>
 
+        {/* Root-locked banner: shown when ?root= is set */}
+        {safeInitialRoot && (
+          <div className="px-3 py-2 border-b border-border/60 bg-amber-500/8 flex items-center justify-between gap-2">
+            <span className="text-[11px] text-amber-400/90 leading-tight min-w-0 truncate">
+              Local files: <code className="font-mono">{safeInitialRoot.split('/').pop()}</code>
+            </span>
+            <Link
+              href={initialFrom ? `/projects/detail?project=${encodeURIComponent(initialFrom)}` : '/chat'}
+              className="text-[11px] text-muted-foreground hover:text-foreground whitespace-nowrap transition-colors flex-shrink-0"
+            >
+              Exit ↗
+            </Link>
+          </div>
+        )}
+
         {/* Collapsible settings */}
         {showSettings && (
           <div className="p-3 border-b border-border/60 space-y-3 bg-muted/10">
             <div className="space-y-1.5">
               <label className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Directory</label>
-              <select value={showCustomInput ? '__custom__' : selectedDirectory}
-                onChange={e => { if (e.target.value === '__custom__') { setShowCustomInput(true); } else { setShowCustomInput(false); setSelectedDirectory(e.target.value); } }}
-                className="w-full text-xs rounded-lg px-2 py-1.5 bg-muted/40 border border-border focus:outline-none focus:border-primary/40">
-                <option value="">Select…</option>
-                {dirOptions.map(d => <option key={d.path} value={d.path} title={d.path}>{d.name}</option>)}
-                <option value="__custom__">Custom…</option>
-              </select>
-              {showCustomInput && (
-                <input type="text" value={customDir} onChange={e => setCustomDir(e.target.value)}
-                  placeholder="/path/to/project"
-                  className="w-full text-xs rounded-lg px-2 py-1.5 bg-muted/40 border border-border focus:outline-none focus:border-primary/40 font-mono" />
+              {!safeInitialRoot && (
+                <>
+                  <select value={showCustomInput ? '__custom__' : selectedDirectory}
+                    onChange={e => { if (e.target.value === '__custom__') { setShowCustomInput(true); } else { setShowCustomInput(false); setSelectedDirectory(e.target.value); } }}
+                    className="w-full text-xs rounded-lg px-2 py-1.5 bg-muted/40 border border-border focus:outline-none focus:border-primary/40">
+                    <option value="">Select…</option>
+                    {dirOptions.map(d => <option key={d.path} value={d.path} title={d.path}>{d.name}</option>)}
+                    <option value="__custom__">Custom…</option>
+                  </select>
+                  {showCustomInput && (
+                    <input type="text" value={customDir} onChange={e => setCustomDir(e.target.value)}
+                      placeholder="/path/to/project"
+                      className="w-full text-xs rounded-lg px-2 py-1.5 bg-muted/40 border border-border focus:outline-none focus:border-primary/40 font-mono" />
+                  )}
+                  <button onClick={openDirBrowser} className="w-full text-left text-xs text-muted-foreground hover:text-foreground py-1 px-1 rounded transition-colors">
+                    Browse folders…
+                  </button>
+                </>
               )}
-              <button onClick={openDirBrowser} className="w-full text-left text-xs text-muted-foreground hover:text-foreground py-1 px-1 rounded transition-colors">
-                Browse folders…
-              </button>
+              {safeInitialRoot && (
+                <p className="text-xs font-mono text-muted-foreground truncate px-2 py-1.5 bg-muted/20 rounded-lg border border-border/40">
+                  {safeInitialRoot.split('/').pop()}
+                </p>
+              )}
             </div>
             <div className="space-y-1">
               <label className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Permissions</label>
@@ -3304,10 +3393,14 @@ export function ChatClient({
       {openFile && (
         <div
           className={cn(
-            'shrink-0 flex flex-col border-r border-border/60 relative transition-colors',
+            'flex flex-col border-r border-border/60 relative transition-colors',
+            safeInitialRoot ? 'flex-1 min-w-0' : 'shrink-0',
             isDragOverEditor && 'ring-2 ring-primary/40 ring-inset',
           )}
-          style={{ width: `${filePanelPct}%`, background: 'hsl(var(--card))' }}
+          style={safeInitialRoot
+            ? { background: 'hsl(var(--card))' }
+            : { width: `${filePanelPct}%`, background: 'hsl(var(--card))' }
+          }
           onDragOver={(e) => {
             if (!e.dataTransfer.types.includes('application/x-chat-file-mention')) return;
             e.preventDefault();
@@ -3499,7 +3592,18 @@ export function ChatClient({
             ) : mdPreview === 'preview' && openFile.name.endsWith('.ipynb') ? (
               <NotebookPreview content={editedContent} onChange={setEditedContent} />
             ) : mdPreview === 'preview' ? (
-              <MdContent content={editedContent} />
+              <MdContent
+                content={editedContent}
+                onMarkdownLink={(href) => {
+                  if (!openFile) return;
+                  const lastSlash = openFile.path.lastIndexOf('/');
+                  const currentDir = lastSlash >= 0 ? openFile.path.substring(0, lastSlash) : openFile.path;
+                  const cleaned = href.replace(/^\.\//, '');
+                  if (cleaned.startsWith('..') || cleaned.includes('/..')) return;
+                  const targetPath = cleaned.startsWith('/') ? cleaned : `${currentDir}/${cleaned}`;
+                  openFileContent(targetPath);
+                }}
+              />
             ) : (
               <MonacoEditor
                 height="100%"
@@ -3611,8 +3715,8 @@ export function ChatClient({
         </div>
       )}
 
-      {/* ── Resize handle (only when file is open) ── */}
-      {openFile && (
+      {/* ── Resize handle (only when file is open AND not in locked root mode) ── */}
+      {openFile && !safeInitialRoot && (
         <div
           onMouseDown={handleResizeDragStart}
           onDoubleClick={() => setFilePanelPct(50)}
@@ -3628,7 +3732,7 @@ export function ChatClient({
       )}
 
       {/* ── Chat panel ── */}
-      <div className="flex-1 flex flex-col min-w-0">
+      {!safeInitialRoot && <div className="flex-1 flex flex-col min-w-0">
         {/* Session header */}
         {currentSessionId && (
           <div className="px-4 py-2.5 border-b border-border/60 flex items-center gap-3 bg-card/20 shrink-0">
@@ -3731,7 +3835,7 @@ export function ChatClient({
                 </div>
               ))}
             </div>
-          ) : messages.length === 0 && showProjectPicker ? (
+          ) : messages.length === 0 && showProjectPicker && !safeInitialRoot ? (
             /* ── Project picker ── */
             <div className="flex flex-col h-full overflow-y-auto">
               <div className="max-w-xl mx-auto w-full px-6 py-8 space-y-6">
@@ -3792,6 +3896,11 @@ export function ChatClient({
                 </div>
               </div>
             </div>
+          ) : safeInitialRoot && !openFile ? (
+            /* ── Root-locked mode: no file open yet ── */
+            <div className="flex-1 flex items-center justify-center text-sm text-muted-foreground">
+              Click a file in the explorer to view
+            </div>
           ) : messages.length === 0 ? (
             /* ── Ready to chat (directory already set) ── */
             <div className="flex flex-col items-center justify-center h-full gap-6 px-6">
@@ -3837,8 +3946,8 @@ export function ChatClient({
           )}
         </div>
 
-        {/* Input area */}
-        <div className="shrink-0 border-t border-border/60 bg-card/20">
+        {/* Input area — hidden in root-locked (?root=) mode */}
+        {!safeInitialRoot && <div className="shrink-0 border-t border-border/60 bg-card/20">
           {!effectiveDir && !showProjectPicker && (
             <p className="text-xs text-muted-foreground text-center pt-3 px-4">
               Click <strong>New Chat</strong> to select a project directory
@@ -4158,8 +4267,8 @@ export function ChatClient({
               );
             })()}
           </div>
-        </div>
-      </div>
+        </div>}
+      </div>}
       </div>{/* end splitContainerRef */}
     </div>
 
@@ -4286,6 +4395,19 @@ export function ChatClient({
               className="w-full flex items-center gap-2.5 px-3 py-1.5 text-[13px] hover:bg-muted/60 transition-colors text-left">
               <FolderPlus className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
               New Folder
+            </button>
+            <div className="border-t border-border/50 my-1" />
+          </>
+        )}
+
+        {/* File-only actions */}
+        {contextMenu.entry.type === 'file' && (
+          <>
+            <button
+              onClick={() => { downloadFile(contextMenu.entry.path, contextMenu.entry.name); setContextMenu(null); }}
+              className="w-full flex items-center gap-2.5 px-3 py-1.5 text-[13px] hover:bg-muted/60 transition-colors text-left">
+              <Download className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+              Download file
             </button>
             <div className="border-t border-border/50 my-1" />
           </>

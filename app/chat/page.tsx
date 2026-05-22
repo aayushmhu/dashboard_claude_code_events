@@ -15,7 +15,12 @@ async function getSessions(): Promise<Session[]> {
   }
 }
 
-export default async function ChatPage() {
+export default async function ChatPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ root?: string; from?: string }>;
+}) {
+  const { root, from } = await searchParams;
   const sessions = await getSessions();
-  return <ChatClient initialSessions={sessions} />;
+  return <ChatClient initialSessions={sessions} initialRoot={root} initialFrom={from} />;
 }

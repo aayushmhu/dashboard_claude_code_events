@@ -13,6 +13,7 @@ import type { ProjectDetailResponse } from '@/app/api/projects/detail/route';
 import { CostByModel } from './cost-by-model';
 import { CostTimeline } from './cost-timeline';
 import { PathCopyButton } from './path-copy-button';
+import { LocalFilesSection } from './local-files-section';
 import { SessionTable } from '@/components/session-table';
 import { PaginationInfo, PaginationLinks } from '@/components/pagination';
 import type { Session } from '@/lib/types';
@@ -281,6 +282,8 @@ export default async function ProjectDetailPage({
             </CardContent>
           </Card>
         )}
+
+        <LocalFilesSection project={project} />
       </div>
     </div>
   );
